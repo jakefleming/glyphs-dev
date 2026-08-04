@@ -152,15 +152,16 @@ class ProportionalWeight(FilterWithDialog):
 		scale = max(abs(ax), abs(ay))
 		if scale < 0.01:
 			return
-		searchR = 2.5 * scale + 2
+		searchR = 1.5 * scale + 1
 
 		allNodes = []
 		for shape in layer.shapes:
 			if not shape.__class__.__name__.endswith("Path"):
 				continue
 			for n in shape.nodes:
-				if n.type != OFFCURVE:
+				if n.type != OFFCURVE and not n.smooth:
 					allNodes.append(n)
+		used = set()
 
 		for (px, py, tin, tout) in corners:
 			# both possible offset sides; the result outline tells us which is right
@@ -179,6 +180,8 @@ class ProportionalWeight(FilterWithDialog):
 			nearest = None
 			nearestDist = searchR
 			for n in allNodes:
+				if id(n) in used:
+					continue
 				d = math.hypot(n.position.x - px, n.position.y - py)
 				if d < nearestDist:
 					nearest = n
@@ -189,6 +192,9 @@ class ProportionalWeight(FilterWithDialog):
 			M = min(candidates, key=lambda m: (m[0] - nearest.position.x) ** 2 + (m[1] - nearest.position.y) ** 2)
 			if math.hypot(M[0] - px, M[1] - py) > MITER_LIMIT * scale:
 				continue  # miter limit: leave the clipped corner alone
+			if math.hypot(M[0] - nearest.position.x, M[1] - nearest.position.y) > 2.0 * scale:
+				continue  # correction would jump implausibly far: wrong node, skip
+			used.add(id(nearest))
 			nearest.position = NSMakePoint(M[0], M[1])
 			nearest.smooth = False
 
