@@ -16,7 +16,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 124))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 178))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -29,9 +29,9 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(f)
 			return f
 
-		def valueField(y):
+		def valueField(y, initial):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(222, y, 46, 17))
-			f.setStringValue_("0")
+			f.setStringValue_(initial)
 			f.setBezeled_(False)
 			f.setDrawsBackground_(False)
 			f.setEditable_(False)
@@ -41,34 +41,35 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(f)
 			return f
 
-		label("Weight", 98)
-		self.valueField = valueField(98)
-		self.slider = NSSlider.alloc().initWithFrame_(NSMakeRect(10, 68, 258, 24))
-		self.slider.setMinValue_(-150)
-		self.slider.setMaxValue_(150)
-		self.slider.setDoubleValue_(0)
-		self.slider.setContinuous_(True)
-		self.slider.setTarget_(self)
-		self.slider.setAction_("sliderCallback:")
-		view.addSubview_(self.slider)
+		def slider(y, minV, maxV, initial):
+			s = NSSlider.alloc().initWithFrame_(NSMakeRect(10, y, 258, 24))
+			s.setMinValue_(minV)
+			s.setMaxValue_(maxV)
+			s.setDoubleValue_(initial)
+			s.setContinuous_(True)
+			s.setTarget_(self)
+			s.setAction_("sliderCallback:")
+			view.addSubview_(s)
+			return s
 
-		label("Vertical %", 44)
-		self.vpctField = valueField(44)
-		self.vpctField.setStringValue_("40")
-		self.vpctSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(10, 14, 258, 24))
-		self.vpctSlider.setMinValue_(0)
-		self.vpctSlider.setMaxValue_(200)
-		self.vpctSlider.setDoubleValue_(40)
-		self.vpctSlider.setContinuous_(True)
-		self.vpctSlider.setTarget_(self)
-		self.vpctSlider.setAction_("sliderCallback:")
-		view.addSubview_(self.vpctSlider)
+		label("Weight", 152)
+		self.valueField = valueField(152, "0")
+		self.slider = slider(122, -200, 200, 0)
+
+		label("Vertical %", 98)
+		self.vpctField = valueField(98, "40")
+		self.vpctSlider = slider(68, 0, 200, 40)
+
+		label("Width %", 44)
+		self.widthField = valueField(44, "100")
+		self.widthSlider = slider(14, 50, 200, 100)
 
 		self.dialog = view
 
 	def sliderCallback_(self, sender):
 		self.valueField.setStringValue_("%d" % round(self.slider.doubleValue()))
 		self.vpctField.setStringValue_("%d" % round(self.vpctSlider.doubleValue()))
+		self.widthField.setStringValue_("%d" % round(self.widthSlider.doubleValue()))
 		self.update()
 
 	@objc.python_method
@@ -101,37 +102,43 @@ class ProportionalWeight(FilterWithDialog):
 				vpct = float(customParameters['vertical'])
 			else:
 				vpct = self.vpctSlider.doubleValue()
-			if abs(amount) < 0.01:
-				return
+			if 'width' in customParameters:
+				wpct = float(customParameters['width'])
+			else:
+				wpct = self.widthSlider.doubleValue()
 
-			before = layer.bounds
-			if before.size.width == 0 or before.size.height == 0:
-				return
+			# weight: offset, then restore the original bounding box; with the
+			# reduced vertical offset the y factor stays near 1, so diagonals
+			# keep their angle
+			if abs(amount) >= 0.01:
+				before = layer.bounds
+				if before.size.width > 0 and before.size.height > 0:
+					if self.offsetLayer(layer, amount, amount * vpct / 100.0):
+						after = layer.bounds
+						if after.size.width > 0 and after.size.height > 0:
+							sx = before.size.width / after.size.width
+							sy = before.size.height / after.size.height
+							tx = before.origin.x - sx * after.origin.x
+							ty = before.origin.y - sy * after.origin.y
+							layer.applyTransform((sx, 0, 0, sy, tx, ty))
+					else:
+						print("Proportional Weight: offset filter not available")
 
-			if not self.offsetLayer(layer, amount, amount * vpct / 100.0):
-				print("Proportional Weight: offset filter not available")
-				return
-
-			after = layer.bounds
-			if after.size.width == 0 or after.size.height == 0:
-				return
-
-			# restore the original bounding box; with the reduced vertical
-			# offset the y factor stays near 1, so diagonals keep their angle
-			sx = before.size.width / after.size.width
-			sy = before.size.height / after.size.height
-			tx = before.origin.x - sx * after.origin.x
-			ty = before.origin.y - sy * after.origin.y
-			layer.applyTransform((sx, 0, 0, sy, tx, ty))
+			# width: condense/extend outlines and advance width together
+			if abs(wpct - 100.0) >= 0.01:
+				w = wpct / 100.0
+				layer.applyTransform((w, 0, 0, 1, 0, 0))
+				layer.width = layer.width * w
 		except Exception:
 			print(traceback.format_exc())
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; amount:%s; vertical:%s" % (
+		return "%s; amount:%s; vertical:%s; width:%s" % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
-			round(self.vpctSlider.doubleValue()))
+			round(self.vpctSlider.doubleValue()),
+			round(self.widthSlider.doubleValue()))
 
 	@objc.python_method
 	def __file__(self):
