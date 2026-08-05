@@ -91,6 +91,12 @@ class ProportionalWeight(FilterWithDialog):
 		self.widthSlider = slider(14, 50, 200, 100)
 
 		self.dialog = view
+		self._origWidths = {}
+
+	@objc.python_method
+	def start(self):
+		# new dialog session: current layer widths are the new baseline
+		self._origWidths = {}
 
 	def sliderCallback_(self, sender):
 		self.valueField.setStringValue_("%d" % round(self.slider.doubleValue()))
@@ -341,10 +347,24 @@ class ProportionalWeight(FilterWithDialog):
 							layer.applyTransform((sx, 0, 0, sy, tx, ty))
 
 			# width: condense/extend outlines and advance width together
-			if abs(wpct - 100.0) >= 0.01:
-				w = wpct / 100.0
-				layer.applyTransform((w, 0, 0, 1, 0, 0))
-				layer.width = layer.width * w
+			w = wpct / 100.0
+			if customParameters:
+				# fresh layer copy per call at export time: safe to multiply
+				if abs(w - 1.0) >= 0.0001:
+					layer.applyTransform((w, 0, 0, 1, 0, 0))
+					layer.width = layer.width * w
+			else:
+				# the live preview re-runs the filter on the same layer object
+				# and only restores the shapes between passes, so an in-place
+				# width multiply compounds on every slider event. Set the
+				# width absolutely from the dialog session's cached original.
+				widths = getattr(self, '_origWidths', None)
+				if widths is None:
+					widths = self._origWidths = {}
+				orig = widths.setdefault(layer.layerId, layer.width)
+				if abs(w - 1.0) >= 0.0001:
+					layer.applyTransform((w, 0, 0, 1, 0, 0))
+				layer.width = orig * w
 		except Exception:
 			print(traceback.format_exc())
 
