@@ -13,11 +13,19 @@ Symlinked into `~/Library/Application Support/Glyphs 3/Scripts/`. Reload in Glyp
 
 Typical combo: Cornerize Curves (Threshold), then Remove Shallow Points.
 
+- **Lucas Weight Steps** — prints geometrically spaced stem widths from `CURRENT_STEM` to `TARGET_STEM` (Lucas de Groot's interpolation theory: constant growth *percentage* per step, so the weight progression looks optically even), along with the matching `ProportionalWeight` custom parameter for each instance. Run once toward Black and once toward Thin.
+
 ## Plugins
 
 Symlinked into `~/Library/Application Support/Glyphs 3/Plugins/`. Plugins load at app startup, so restart Glyphs after changes.
 
-- **Proportional Weight** (`ProportionalWeight.glyphsFilter`) — Filter > Proportional Weight. Slider adds or removes weight by offsetting the outline, then rescales back to the original bounding box so proportions and width are preserved. Also usable as a custom parameter: `Proportional Weight; amount:N`.
+- **Proportional Weight** (`ProportionalWeight.glyphsFilter`) — Filter > Proportional Weight. Adds or removes weight by offsetting the outline, then rescales back to the original bounding box so proportions and width are preserved. Sliders:
+  - **Weight** — offset amount in units; positive = bolder.
+  - **Vertical %** — how much of the weight goes to horizontals relative to verticals (anisotropy). 100 = round nib.
+  - **Counters %** — how much of the offset applies to counter contours. Below 100 protects counters when bolding (weight goes to the outside of the letter instead of clogging the counters, RMX-style); 100 = plain offset. A counter that still collapses (offset exceeds its size) is dropped cleanly instead of turning inside out.
+  - **Width %** — condenses/extends outlines and advance width together.
+
+  Also usable as a custom parameter: `ProportionalWeight; amount:N; vertical:N; counters:N; width:N`.
 
 ### Python plugin bundle anatomy
 

@@ -38,7 +38,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 178))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 232))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -74,13 +74,17 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(s)
 			return s
 
-		label("Weight", 152)
-		self.valueField = valueField(152, "0")
-		self.slider = slider(122, -200, 200, 0)
+		label("Weight", 206)
+		self.valueField = valueField(206, "0")
+		self.slider = slider(176, -200, 200, 0)
 
-		label("Vertical %", 98)
-		self.vpctField = valueField(98, "40")
-		self.vpctSlider = slider(68, 0, 200, 40)
+		label("Vertical %", 152)
+		self.vpctField = valueField(152, "40")
+		self.vpctSlider = slider(122, 0, 200, 40)
+
+		label("Counters %", 98)
+		self.cpctField = valueField(98, "100")
+		self.cpctSlider = slider(68, 0, 150, 100)
 
 		label("Width %", 44)
 		self.widthField = valueField(44, "100")
@@ -91,6 +95,7 @@ class ProportionalWeight(FilterWithDialog):
 	def sliderCallback_(self, sender):
 		self.valueField.setStringValue_("%d" % round(self.slider.doubleValue()))
 		self.vpctField.setStringValue_("%d" % round(self.vpctSlider.doubleValue()))
+		self.cpctField.setStringValue_("%d" % round(self.cpctSlider.doubleValue()))
 		self.widthField.setStringValue_("%d" % round(self.widthSlider.doubleValue()))
 		self.update()
 
@@ -141,9 +146,12 @@ class ProportionalWeight(FilterWithDialog):
 		return t0, t1
 
 	@objc.python_method
-	def offsetLayerCustom(self, layer, ax, ay):
+	def offsetLayerCustom(self, layer, ax, ay, counterFactor=1.0):
 		"""Offset every closed path with true miter joins at corners.
-		Positive = bolder. Handles lines and cubics."""
+		Positive = bolder. Handles lines and cubics.
+		Counter paths get their offset scaled by counterFactor, so weight
+		can be pushed to the outside of the letter instead of into the
+		counters (RMX-style counter protection)."""
 		scale = max(abs(ax), abs(ay))
 
 		paths = []
@@ -156,9 +164,7 @@ class ProportionalWeight(FilterWithDialog):
 		if not paths:
 			return False
 
-		# global orientation: does this font draw its outer contours CCW?
-		def signedArea(path):
-			pts = [(n.position.x, n.position.y) for n in path.nodes if n.type != OFFCURVE]
+		def polyArea(pts):
 			a = 0.0
 			for i in range(len(pts)):
 				x1, y1 = pts[i]
@@ -166,7 +172,12 @@ class ProportionalWeight(FilterWithDialog):
 				a += x1 * y2 - x2 * y1
 			return a / 2.0
 
-		ccwOuter = signedArea(max(paths, key=lambda p: abs(signedArea(p)))) > 0
+		# global orientation: does this font draw its outer contours CCW?
+		def signedArea(path):
+			return polyArea([(n.position.x, n.position.y) for n in path.nodes if n.type != OFFCURVE])
+
+		areas = [signedArea(p) for p in paths]
+		ccwOuter = areas[max(range(len(paths)), key=lambda i: abs(areas[i]))] > 0
 
 		def normalOf(t):
 			# unit normal pointing toward the white side (bold direction for +amount)
@@ -174,12 +185,15 @@ class ProportionalWeight(FilterWithDialog):
 				return (t[1], -t[0])
 			return (-t[1], t[0])
 
-		def disp(t):
-			n = normalOf(t)
-			return (n[0] * ax, n[1] * ay)
-
 		newShapes = list(others)
-		for path in paths:
+		for path, origArea in zip(paths, areas):
+			isCounter = (origArea > 0) != ccwOuter
+			f = counterFactor if isCounter else 1.0
+
+			def disp(t):
+				n = normalOf(t)
+				return (n[0] * ax * f, n[1] * ay * f)
+
 			segs = self.pathSegments(path)
 			if not segs:
 				newShapes.append(path)
@@ -202,6 +216,7 @@ class ProportionalWeight(FilterWithDialog):
 
 			# join segments: weld smooth junctions, miter corners
 			newNodes = []
+			startNodes = []  # per segment: the joined node where it now begins
 			nsegs = len(segs)
 			for i in range(nsegs):
 				prev = segs[i - 1]
@@ -248,6 +263,8 @@ class ProportionalWeight(FilterWithDialog):
 						newNodes.append(GSNode(NSMakePoint(E1[0], E1[1]), endType))
 						newNodes.append(GSNode(NSMakePoint(E2[0], E2[1]), LINE))
 
+				startNodes.append(newNodes[-1])
+
 				if cur['c1'] is not None:
 					newNodes.append(GSNode(NSMakePoint(cur['oc1'][0], cur['oc1'][1]), OFFCURVE))
 					newNodes.append(GSNode(NSMakePoint(cur['oc2'][0], cur['oc2'][1]), OFFCURVE))
@@ -255,6 +272,27 @@ class ProportionalWeight(FilterWithDialog):
 			# a closed path must not end mid-curve: rotate offcurves off the tail
 			while newNodes and newNodes[-1].type == OFFCURVE:
 				newNodes.insert(0, newNodes.pop())
+
+			# collapse guard: when the offset exceeds a shape's local width,
+			# joined segments come out running backwards (edges have passed
+			# through each other). If most of the path length reversed, the
+			# shape is inside out — a counter clogged shut or a stem thinned
+			# past zero — so drop it instead of leaving an artifact.
+			total = reversed_ = 0.0
+			for i in range(nsegs):
+				seg = segs[i]
+				chordLen = math.hypot(seg['B'][0] - seg['A'][0], seg['B'][1] - seg['A'][1])
+				if chordLen < 1e-9:
+					continue
+				a = startNodes[i].position
+				b = startNodes[(i + 1) % nsegs].position
+				dot = ((b.x - a.x) * (seg['B'][0] - seg['A'][0])
+					+ (b.y - a.y) * (seg['B'][1] - seg['A'][1]))
+				total += chordLen
+				if dot < 0:
+					reversed_ += chordLen
+			if total > 0 and reversed_ > total / 2.0:
+				continue
 
 			newPath = GSPath()
 			newPath.closed = True
@@ -278,6 +316,10 @@ class ProportionalWeight(FilterWithDialog):
 				vpct = float(customParameters['vertical'])
 			else:
 				vpct = self.vpctSlider.doubleValue()
+			if 'counters' in customParameters:
+				cpct = float(customParameters['counters'])
+			else:
+				cpct = self.cpctSlider.doubleValue()
 			if 'width' in customParameters:
 				wpct = float(customParameters['width'])
 			else:
@@ -288,7 +330,7 @@ class ProportionalWeight(FilterWithDialog):
 				if before.size.width > 0 and before.size.height > 0:
 					ax = amount
 					ay = amount * vpct / 100.0
-					if self.offsetLayerCustom(layer, ax, ay):
+					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0):
 						after = layer.bounds
 						if after.size.width > 0 and after.size.height > 0:
 							# restore the original bounding box: proportions preserved
@@ -308,10 +350,11 @@ class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; amount:%s; vertical:%s; width:%s" % (
+		return "%s; amount:%s; vertical:%s; counters:%s; width:%s" % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
+			round(self.cpctSlider.doubleValue()),
 			round(self.widthSlider.doubleValue()))
 
 	@objc.python_method
