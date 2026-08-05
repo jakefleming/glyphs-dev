@@ -4,13 +4,13 @@ from __future__ import division, print_function, unicode_literals
 import objc
 import math
 import traceback
-from GlyphsApp import Glyphs, OFFCURVE
+from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
 from AppKit import NSView, NSSlider, NSTextField, NSMakeRect, NSFont
-from Foundation import NSClassFromString, NSMakePoint
+from Foundation import NSMakePoint
 
 MITER_LIMIT = 10  # max corner extension, in multiples of the offset amount
-MIN_TURN_SIN = 0.14  # ~8 degrees: below this a node is not treated as a corner
+WELD_EPS = 0.25  # endpoints closer than this are welded, not joined
 
 
 def _unit(dx, dy):
@@ -20,12 +20,15 @@ def _unit(dx, dy):
 	return (dx / l, dy / l)
 
 
-def _lineIntersect(P, d1, Q, d2):
+def _rayIntersect(P, d1, Q, d2):
+	"""Intersection of P+t*d1 and Q+s*d2. Returns (point, t, s) or None."""
 	denom = d1[0] * d2[1] - d1[1] * d2[0]
 	if abs(denom) < 1e-9:
 		return None
-	t = ((Q[0] - P[0]) * d2[1] - (Q[1] - P[1]) * d2[0]) / denom
-	return (P[0] + t * d1[0], P[1] + t * d1[1])
+	qx, qy = Q[0] - P[0], Q[1] - P[1]
+	t = (qx * d2[1] - qy * d2[0]) / denom
+	s = (qx * d1[1] - qy * d1[0]) / denom
+	return ((P[0] + t * d1[0], P[1] + t * d1[1]), t, s)
 
 
 class ProportionalWeight(FilterWithDialog):
@@ -91,112 +94,178 @@ class ProportionalWeight(FilterWithDialog):
 		self.widthField.setStringValue_("%d" % round(self.widthSlider.doubleValue()))
 		self.update()
 
-	@objc.python_method
-	def offsetLayer(self, layer, xAmount, yAmount):
-		F = NSClassFromString("GlyphsFilterOffsetCurve")
-		attempts = (
-			lambda: F.offsetLayer_offsetX_offsetY_makeStroke_autoStroke_position_metrics_error_shadow_capStyleStart_capStyleEnd_keepCompatibleOutlines_(
-				layer, xAmount, yAmount, False, False, 0.5, None, None, None, 0, 0, True),
-			lambda: F.offsetLayer_offsetX_offsetY_makeStroke_autoStroke_position_metrics_(
-				layer, xAmount, yAmount, False, False, 0.5, None),
-			lambda: F.offsetLayer_offsetX_offsetY_makeStroke_autoStroke_position_error_shadow_(
-				layer, xAmount, yAmount, False, False, 0.5, None, None),
-		)
-		for attempt in attempts:
-			try:
-				attempt()
-				return True
-			except Exception:
-				continue
-		return False
+	# ---------------- offset engine ----------------
 
 	@objc.python_method
-	def collectCorners(self, layer):
-		"""Every non-smooth on-curve node with its unit tangents in and out.
-		Tangents come from handles on curves, neighbor points on lines."""
-		corners = []
-		for shape in layer.shapes:
-			if not shape.__class__.__name__.endswith("Path"):
-				continue
-			nodes = list(shape.nodes)
-			cnt = len(nodes)
-			if cnt < 3:
-				continue
-			for i, n in enumerate(nodes):
-				if n.type == OFFCURVE or n.smooth:
-					continue
-				if not shape.closed and (i == 0 or i == cnt - 1):
-					continue
-				p = n.position
-				pp = nodes[(i - 1) % cnt].position
-				if abs(pp.x - p.x) < 1e-6 and abs(pp.y - p.y) < 1e-6:
-					pp = nodes[(i - 2) % cnt].position  # retracted handle
-				tin = _unit(p.x - pp.x, p.y - pp.y)
-				np_ = nodes[(i + 1) % cnt].position
-				if abs(np_.x - p.x) < 1e-6 and abs(np_.y - p.y) < 1e-6:
-					np_ = nodes[(i + 2) % cnt].position
-				tout = _unit(np_.x - p.x, np_.y - p.y)
-				if tin is None or tout is None:
-					continue
-				cross = tin[0] * tout[1] - tin[1] * tout[0]
-				dot = tin[0] * tout[0] + tin[1] * tout[1]
-				if abs(cross) < MIN_TURN_SIN and dot > 0:
-					continue  # nearly straight-through, not a corner
-				corners.append((p.x, p.y, tin, tout))
-		return corners
+	def pathSegments(self, path):
+		"""Split a GSPath into segments between on-curve nodes.
+		Each segment: dict with A, B (original endpoints), c1, c2 (or None),
+		smoothA (original node smoothness at the segment start)."""
+		nodes = list(path.nodes)
+		onIdx = [i for i, n in enumerate(nodes) if n.type != OFFCURVE]
+		if len(onIdx) < 2:
+			return None
+		segs = []
+		cnt = len(nodes)
+		for k in range(len(onIdx)):
+			a = onIdx[k]
+			b = onIdx[(k + 1) % len(onIdx)]
+			between = []
+			i = (a + 1) % cnt
+			while i != b:
+				between.append(nodes[i])
+				i = (i + 1) % cnt
+			A, B = nodes[a], nodes[b]
+			seg = {
+				'A': (A.position.x, A.position.y),
+				'B': (B.position.x, B.position.y),
+				'smoothA': bool(A.smooth),
+				'c1': None, 'c2': None,
+			}
+			if len(between) == 2:
+				seg['c1'] = (between[0].position.x, between[0].position.y)
+				seg['c2'] = (between[1].position.x, between[1].position.y)
+			elif len(between) != 0:
+				return None  # quadratic or exotic: bail out for this path
+			segs.append(seg)
+		return segs
 
 	@objc.python_method
-	def restoreCorners(self, layer, corners, ax, ay):
-		"""Pull each clipped corner in the offset result out to the true miter:
-		the intersection of the two tangent lines shifted by the offset."""
+	def segTangents(self, seg):
+		A, B, c1, c2 = seg['A'], seg['B'], seg['c1'], seg['c2']
+		if c1 is None:
+			t = _unit(B[0] - A[0], B[1] - A[1])
+			return t, t
+		t0 = _unit(c1[0] - A[0], c1[1] - A[1]) or _unit(c2[0] - A[0], c2[1] - A[1]) or _unit(B[0] - A[0], B[1] - A[1])
+		t1 = _unit(B[0] - c2[0], B[1] - c2[1]) or _unit(B[0] - c1[0], B[1] - c1[1]) or _unit(B[0] - A[0], B[1] - A[1])
+		return t0, t1
+
+	@objc.python_method
+	def offsetLayerCustom(self, layer, ax, ay):
+		"""Offset every closed path with true miter joins at corners.
+		Positive = bolder. Handles lines and cubics."""
 		scale = max(abs(ax), abs(ay))
-		if scale < 0.01:
-			return
-		searchR = 1.5 * scale + 1
 
-		allNodes = []
+		paths = []
+		others = []
 		for shape in layer.shapes:
-			if not shape.__class__.__name__.endswith("Path"):
-				continue
-			for n in shape.nodes:
-				if n.type != OFFCURVE and not n.smooth:
-					allNodes.append(n)
-		used = set()
+			if isinstance(shape, GSPath) and shape.closed:
+				paths.append(shape)
+			else:
+				others.append(shape)
+		if not paths:
+			return False
 
-		for (px, py, tin, tout) in corners:
-			# both possible offset sides; the result outline tells us which is right
-			candidates = []
-			for sign in (1.0, -1.0):
-				nin = (tin[1] * sign, -tin[0] * sign)
-				nout = (tout[1] * sign, -tout[0] * sign)
-				A = (px + nin[0] * ax, py + nin[1] * ay)
-				B = (px + nout[0] * ax, py + nout[1] * ay)
-				M = _lineIntersect(A, tin, B, tout)
-				if M is not None:
-					candidates.append(M)
-			if not candidates:
+		# global orientation: does this font draw its outer contours CCW?
+		def signedArea(path):
+			pts = [(n.position.x, n.position.y) for n in path.nodes if n.type != OFFCURVE]
+			a = 0.0
+			for i in range(len(pts)):
+				x1, y1 = pts[i]
+				x2, y2 = pts[(i + 1) % len(pts)]
+				a += x1 * y2 - x2 * y1
+			return a / 2.0
+
+		ccwOuter = signedArea(max(paths, key=lambda p: abs(signedArea(p)))) > 0
+
+		def normalOf(t):
+			# unit normal pointing toward the white side (bold direction for +amount)
+			if ccwOuter:
+				return (t[1], -t[0])
+			return (-t[1], t[0])
+
+		def disp(t):
+			n = normalOf(t)
+			return (n[0] * ax, n[1] * ay)
+
+		newShapes = list(others)
+		for path in paths:
+			segs = self.pathSegments(path)
+			if not segs:
+				newShapes.append(path)
 				continue
 
-			nearest = None
-			nearestDist = searchR
-			for n in allNodes:
-				if id(n) in used:
+			# offset each segment independently
+			for seg in segs:
+				t0, t1 = self.segTangents(seg)
+				if t0 is None or t1 is None:
+					seg['oA'], seg['oB'] = seg['A'], seg['B']
+					seg['t0'], seg['t1'] = (1, 0), (1, 0)
 					continue
-				d = math.hypot(n.position.x - px, n.position.y - py)
-				if d < nearestDist:
-					nearest = n
-					nearestDist = d
-			if nearest is None:
-				continue
+				d0, d1 = disp(t0), disp(t1)
+				seg['t0'], seg['t1'] = t0, t1
+				seg['oA'] = (seg['A'][0] + d0[0], seg['A'][1] + d0[1])
+				seg['oB'] = (seg['B'][0] + d1[0], seg['B'][1] + d1[1])
+				if seg['c1'] is not None:
+					seg['oc1'] = (seg['c1'][0] + d0[0], seg['c1'][1] + d0[1])
+					seg['oc2'] = (seg['c2'][0] + d1[0], seg['c2'][1] + d1[1])
 
-			M = min(candidates, key=lambda m: (m[0] - nearest.position.x) ** 2 + (m[1] - nearest.position.y) ** 2)
-			if math.hypot(M[0] - px, M[1] - py) > MITER_LIMIT * scale:
-				continue  # miter limit: leave the clipped corner alone
-			if math.hypot(M[0] - nearest.position.x, M[1] - nearest.position.y) > 2.0 * scale:
-				continue  # correction would jump implausibly far: wrong node, skip
-			used.add(id(nearest))
-			nearest.position = NSMakePoint(M[0], M[1])
-			nearest.smooth = False
+			# join segments: weld smooth junctions, miter corners
+			newNodes = []
+			nsegs = len(segs)
+			for i in range(nsegs):
+				prev = segs[i - 1]
+				cur = segs[i]
+				E1 = prev['oB']  # end of previous offset segment
+				E2 = cur['oA']  # start of current offset segment
+				P = cur['A']  # original corner position
+				endType = CURVE if prev['c1'] is not None else LINE
+				gap = math.hypot(E1[0] - E2[0], E1[1] - E2[1])
+
+				bothLines = prev['c1'] is None and cur['c1'] is None
+				if cur['smoothA'] or gap < WELD_EPS:
+					W = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
+					n = GSNode(NSMakePoint(W[0], W[1]), endType)
+					n.smooth = bool(cur['smoothA'])
+					newNodes.append(n)
+				else:
+					hit = _rayIntersect(E1, prev['t1'], E2, cur['t0'])
+					mitered = False
+					if hit is not None:
+						M, t, s = hit
+						if math.hypot(M[0] - P[0], M[1] - P[1]) <= MITER_LIMIT * scale:
+							if bothLines:
+								# line corners collapse to the single intersection:
+								# extends edges when they gap (miter), trims them
+								# when they overlap (convex corner, thinning)
+								newNodes.append(GSNode(NSMakePoint(M[0], M[1]), LINE))
+								mitered = True
+							elif t >= -0.01 and s <= 0.01:
+								# curve corner, edges gap apart: keep both curve
+								# endpoints and bridge through the miter point
+								newNodes.append(GSNode(NSMakePoint(E1[0], E1[1]), endType))
+								newNodes.append(GSNode(NSMakePoint(M[0], M[1]), LINE))
+								newNodes.append(GSNode(NSMakePoint(E2[0], E2[1]), LINE))
+								mitered = True
+							else:
+								# curve corner, edges overlap: welding is the safe
+								# trim (a real bezier trim would be better)
+								W = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
+								newNodes.append(GSNode(NSMakePoint(W[0], W[1]), endType))
+								mitered = True
+					if not mitered:
+						# bevel fallback: straight line E1 -> E2
+						newNodes.append(GSNode(NSMakePoint(E1[0], E1[1]), endType))
+						newNodes.append(GSNode(NSMakePoint(E2[0], E2[1]), LINE))
+
+				if cur['c1'] is not None:
+					newNodes.append(GSNode(NSMakePoint(cur['oc1'][0], cur['oc1'][1]), OFFCURVE))
+					newNodes.append(GSNode(NSMakePoint(cur['oc2'][0], cur['oc2'][1]), OFFCURVE))
+
+			# a closed path must not end mid-curve: rotate offcurves off the tail
+			while newNodes and newNodes[-1].type == OFFCURVE:
+				newNodes.insert(0, newNodes.pop())
+
+			newPath = GSPath()
+			newPath.closed = True
+			for n in newNodes:
+				newPath.nodes.append(n)
+			newShapes.append(newPath)
+
+		layer.shapes = newShapes
+		return True
+
+	# ---------------- filter ----------------
 
 	@objc.python_method
 	def filter(self, layer, inEditView, customParameters):
@@ -219,19 +288,15 @@ class ProportionalWeight(FilterWithDialog):
 				if before.size.width > 0 and before.size.height > 0:
 					ax = amount
 					ay = amount * vpct / 100.0
-					corners = self.collectCorners(layer)
-					if self.offsetLayer(layer, ax, ay):
-						self.restoreCorners(layer, corners, ax, ay)
+					if self.offsetLayerCustom(layer, ax, ay):
 						after = layer.bounds
 						if after.size.width > 0 and after.size.height > 0:
-							# restore the original bounding box; proportions preserved
+							# restore the original bounding box: proportions preserved
 							sx = before.size.width / after.size.width
 							sy = before.size.height / after.size.height
 							tx = before.origin.x - sx * after.origin.x
 							ty = before.origin.y - sy * after.origin.y
 							layer.applyTransform((sx, 0, 0, sy, tx, ty))
-					else:
-						print("Proportional Weight: offset filter not available")
 
 			# width: condense/extend outlines and advance width together
 			if abs(wpct - 100.0) >= 0.01:
