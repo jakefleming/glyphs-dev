@@ -6,11 +6,62 @@ import math
 import traceback
 from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
-from AppKit import NSView, NSSlider, NSTextField, NSMakeRect, NSFont, NSButton
+from AppKit import (NSView, NSSlider, NSTextField, NSMakeRect, NSFont, NSButton,
+	NSColor, NSBezierPath)
 from Foundation import NSMakePoint
 
 MITER_LIMIT = 10  # max corner extension, in multiples of the offset amount
 WELD_EPS = 0.25  # endpoints closer than this are welded, not joined
+PAD_RANGE = 60  # units of counter shift at full pad deflection
+
+
+class ProportionalWeightPad(NSView):
+	"""2D XY pad: drag the dot to shift counters. Center = no shift."""
+
+	def acceptsFirstMouse_(self, event):
+		return True
+
+	def drawRect_(self, rect):
+		b = self.bounds()
+		inset = 10
+		NSColor.controlBackgroundColor().set()
+		NSBezierPath.fillRect_(b)
+		NSColor.tertiaryLabelColor().set()
+		box = NSBezierPath.bezierPathWithRect_(NSMakeRect(1, 1, b.size.width - 2, b.size.height - 2))
+		box.setLineWidth_(1)
+		box.stroke()
+		# center tick marks
+		cxm, cym = b.size.width / 2.0, b.size.height / 2.0
+		for (x1, y1, x2, y2) in ((cxm, 3, cxm, 9), (cxm, b.size.height - 9, cxm, b.size.height - 3),
+				(3, cym, 9, cym), (b.size.width - 9, cym, b.size.width - 3, cym)):
+			p = NSBezierPath.bezierPath()
+			p.moveToPoint_((x1, y1))
+			p.lineToPoint_((x2, y2))
+			p.setLineWidth_(1.5)
+			p.stroke()
+		val = getattr(self, 'val', (0.0, 0.0))
+		dx = cxm + val[0] * (cxm - inset)
+		dy = cym + val[1] * (cym - inset)
+		NSColor.systemBlueColor().set()
+		NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(dx - 7, dy - 7, 14, 14)).fill()
+
+	def handleEvent_(self, event):
+		p = self.convertPoint_fromView_(event.locationInWindow(), None)
+		b = self.bounds()
+		inset = 10
+		nx = (p.x - b.size.width / 2.0) / (b.size.width / 2.0 - inset)
+		ny = (p.y - b.size.height / 2.0) / (b.size.height / 2.0 - inset)
+		self.val = (max(-1.0, min(1.0, nx)), max(-1.0, min(1.0, ny)))
+		self.setNeedsDisplay_(True)
+		owner = getattr(self, 'owner', None)
+		if owner is not None:
+			owner.padChanged()
+
+	def mouseDown_(self, event):
+		self.handleEvent_(event)
+
+	def mouseDragged_(self, event):
+		self.handleEvent_(event)
 
 
 def _unit(dx, dy):
@@ -96,7 +147,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 372))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 518))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -136,36 +187,43 @@ class ProportionalWeight(FilterWithDialog):
 		# Weight is units either side of 0; the % sliders run 0-200 with
 		# neutral 100 centered. Harmony/Balance are effect strengths, so
 		# their neutral (0 = off) is the left edge.
-		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 340, 80, 26))
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 486, 80, 26))
 		resetBtn.setTitle_("Reset")
 		resetBtn.setBezelStyle_(1)  # rounded
 		resetBtn.setTarget_(self)
 		resetBtn.setAction_("resetCallback:")
 		view.addSubview_(resetBtn)
 
-		label("Weight", 314)
-		self.valueField = valueField(314, "+0")
-		self.slider = slider(284, -200, 200, 0)
+		label("Weight", 460)
+		self.valueField = valueField(460, "+0")
+		self.slider = slider(430, -200, 200, 0)
 
-		label("Vertical", 260)
-		self.vpctField = valueField(260, "100%")
-		self.vpctSlider = slider(230, 0, 200, 100)
+		label("Vertical", 406)
+		self.vpctField = valueField(406, "100%")
+		self.vpctSlider = slider(376, 0, 200, 100)
 
-		label("Counters", 206)
-		self.cpctField = valueField(206, "100%")
-		self.cpctSlider = slider(176, 0, 200, 100)
+		label("Counters", 352)
+		self.cpctField = valueField(352, "100%")
+		self.cpctSlider = slider(322, 0, 200, 100)
 
-		label("Width", 152)
-		self.widthField = valueField(152, "100%")
-		self.widthSlider = slider(122, 0, 200, 100)
+		label("Width", 298)
+		self.widthField = valueField(298, "100%")
+		self.widthSlider = slider(268, 0, 200, 100)
 
-		label("Harmony", 98)
-		self.harmonyField = valueField(98, "0%")
-		self.harmonySlider = slider(68, 0, 100, 0)
+		label("Harmony", 244)
+		self.harmonyField = valueField(244, "0%")
+		self.harmonySlider = slider(214, 0, 100, 0)
 
-		label("Balance", 44)
-		self.balanceField = valueField(44, "0%")
-		self.balanceSlider = slider(14, 0, 100, 0)
+		label("Balance", 190)
+		self.balanceField = valueField(190, "0%")
+		self.balanceSlider = slider(160, 0, 100, 0)
+
+		label("Counter Position", 130)
+		self.padField = valueField(130, "0, 0")
+		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(10, 10, 116, 116))
+		self.pad.val = (0.0, 0.0)
+		self.pad.owner = self
+		view.addSubview_(self.pad)
 
 		self.dialog = view
 		self._origWidths = {}
@@ -182,7 +240,16 @@ class ProportionalWeight(FilterWithDialog):
 		self.widthSlider.setDoubleValue_(100)
 		self.harmonySlider.setDoubleValue_(0)
 		self.balanceSlider.setDoubleValue_(0)
+		self.pad.val = (0.0, 0.0)
+		self.pad.setNeedsDisplay_(True)
+		self.padField.setStringValue_("0, 0")
 		self.sliderCallback_(sender)
+
+	@objc.python_method
+	def padChanged(self):
+		self.padField.setStringValue_("%+d, %+d" % (
+			round(self.pad.val[0] * PAD_RANGE), round(self.pad.val[1] * PAD_RANGE)))
+		self.update()
 
 	def sliderCallback_(self, sender):
 		self.valueField.setStringValue_("%+d" % round(self.slider.doubleValue()))
@@ -464,6 +531,36 @@ class ProportionalWeight(FilterWithDialog):
 		layer.shapes = newShapes
 		return True
 
+	# ---------------- counter shift ----------------
+
+	@objc.python_method
+	def shiftCounters(self, layer, dx, dy):
+		"""Translate counter contours (orientation opposite the dominant
+		outer contour) by dx, dy."""
+		if abs(dx) < 0.01 and abs(dy) < 0.01:
+			return
+		paths = [s for s in layer.shapes if isinstance(s, GSPath) and s.closed]
+		if len(paths) < 2:
+			return  # nothing that can be a counter
+
+		def signedArea(path):
+			pts = [(n.position.x, n.position.y) for n in path.nodes if n.type != OFFCURVE]
+			a = 0.0
+			for i in range(len(pts)):
+				x1, y1 = pts[i]
+				x2, y2 = pts[(i + 1) % len(pts)]
+				a += x1 * y2 - x2 * y1
+			return a / 2.0
+
+		areas = [signedArea(p) for p in paths]
+		ccwOuter = areas[max(range(len(paths)), key=lambda i: abs(areas[i]))] > 0
+		for path, area in zip(paths, areas):
+			if (area > 0) == ccwOuter:
+				continue  # outer contour
+			for n in path.nodes:
+				p = n.position
+				n.position = NSMakePoint(p.x + dx, p.y + dy)
+
 	# ---------------- harmony / balance ----------------
 
 	@objc.python_method
@@ -576,6 +673,18 @@ class ProportionalWeight(FilterWithDialog):
 				bpct = float(customParameters['balance'])
 			else:
 				bpct = self.balanceSlider.doubleValue()
+			if 'countershiftx' in customParameters:
+				csx = float(customParameters['countershiftx'])
+			else:
+				csx = self.pad.val[0] * PAD_RANGE
+			if 'countershifty' in customParameters:
+				csy = float(customParameters['countershifty'])
+			else:
+				csy = self.pad.val[1] * PAD_RANGE
+
+			# counter shift first so the offset + overlap cleanup runs on the
+			# repositioned geometry
+			self.shiftCounters(layer, csx, csy)
 
 			if abs(amount) >= 0.01:
 				before = layer.bounds
@@ -631,14 +740,17 @@ class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; amount:%s; vertical:%s; counters:%s; width:%s; harmony:%s; balance:%s" % (
+		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; harmony:%s; "
+			"balance:%s; countershiftx:%s; countershifty:%s") % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
 			round(self.cpctSlider.doubleValue()),
 			round(self.widthSlider.doubleValue()),
 			round(self.harmonySlider.doubleValue()),
-			round(self.balanceSlider.doubleValue()))
+			round(self.balanceSlider.doubleValue()),
+			round(self.pad.val[0] * PAD_RANGE),
+			round(self.pad.val[1] * PAD_RANGE))
 
 	@objc.python_method
 	def __file__(self):
