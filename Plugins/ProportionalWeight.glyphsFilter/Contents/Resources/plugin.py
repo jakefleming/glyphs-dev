@@ -21,6 +21,9 @@ class ProportionalWeightPad(NSView):
 	def acceptsFirstMouse_(self, event):
 		return True
 
+	def mouseDownCanMoveWindow(self):
+		return False
+
 	def drawRect_(self, rect):
 		b = self.bounds()
 		inset = 10
