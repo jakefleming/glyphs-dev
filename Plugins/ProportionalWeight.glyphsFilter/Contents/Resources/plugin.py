@@ -6,7 +6,7 @@ import math
 import traceback
 from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
-from AppKit import NSView, NSSlider, NSTextField, NSMakeRect, NSFont
+from AppKit import NSView, NSSlider, NSTextField, NSMakeRect, NSFont, NSButton
 from Foundation import NSMakePoint
 
 MITER_LIMIT = 10  # max corner extension, in multiples of the offset amount
@@ -96,7 +96,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 340))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 372))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -136,6 +136,13 @@ class ProportionalWeight(FilterWithDialog):
 		# Weight is units either side of 0; the % sliders run 0-200 with
 		# neutral 100 centered. Harmony/Balance are effect strengths, so
 		# their neutral (0 = off) is the left edge.
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 340, 80, 26))
+		resetBtn.setTitle_("Reset")
+		resetBtn.setBezelStyle_(1)  # rounded
+		resetBtn.setTarget_(self)
+		resetBtn.setAction_("resetCallback:")
+		view.addSubview_(resetBtn)
+
 		label("Weight", 314)
 		self.valueField = valueField(314, "+0")
 		self.slider = slider(284, -200, 200, 0)
@@ -167,6 +174,15 @@ class ProportionalWeight(FilterWithDialog):
 	def start(self):
 		# new dialog session: current layer widths are the new baseline
 		self._origWidths = {}
+
+	def resetCallback_(self, sender):
+		self.slider.setDoubleValue_(0)
+		self.vpctSlider.setDoubleValue_(100)
+		self.cpctSlider.setDoubleValue_(100)
+		self.widthSlider.setDoubleValue_(100)
+		self.harmonySlider.setDoubleValue_(0)
+		self.balanceSlider.setDoubleValue_(0)
+		self.sliderCallback_(sender)
 
 	def sliderCallback_(self, sender):
 		self.valueField.setStringValue_("%+d" % round(self.slider.doubleValue()))
