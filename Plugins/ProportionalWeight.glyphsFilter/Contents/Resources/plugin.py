@@ -227,8 +227,34 @@ class ProportionalWeight(FilterWithDialog):
 				seg['oA'] = (seg['A'][0] + d0[0], seg['A'][1] + d0[1])
 				seg['oB'] = (seg['B'][0] + d1[0], seg['B'][1] + d1[1])
 				if seg['c1'] is not None:
-					seg['oc1'] = (seg['c1'][0] + d0[0], seg['c1'][1] + d0[1])
-					seg['oc2'] = (seg['c2'][0] + d1[0], seg['c2'][1] + d1[1])
+					# Tiller-Hanson: offset each control-polygon edge along its
+					# own normal and re-intersect, so handle lengths scale with
+					# the changing curve radius (translated handles freeze the
+					# curvature and produce flats/kinks)
+					pts = (seg['A'], seg['c1'], seg['c2'], seg['B'])
+					eT = []
+					for j in range(3):
+						eT.append(_unit(pts[j + 1][0] - pts[j][0], pts[j + 1][1] - pts[j][1]))
+					eT[0] = eT[0] or eT[1] or (t0[0], t0[1])
+					eT[1] = eT[1] or eT[0]
+					eT[2] = eT[2] or eT[1]
+					offE = []
+					for j in range(3):
+						dj = disp(eT[j])
+						offE.append(((pts[j][0] + dj[0], pts[j][1] + dj[1]),
+							(pts[j + 1][0] + dj[0], pts[j + 1][1] + dj[1]), eT[j]))
+					c1t = offE[0][1]  # translation fallback
+					c2t = offE[2][0]
+					h1 = _rayIntersect(offE[0][0], offE[0][2], offE[1][0], offE[1][2])
+					h2 = _rayIntersect(offE[1][0], offE[1][2], offE[2][0], offE[2][2])
+					c1n = h1[0] if h1 is not None else c1t
+					c2n = h2[0] if h2 is not None else c2t
+					if math.hypot(c1n[0] - c1t[0], c1n[1] - c1t[1]) > 4 * scale:
+						c1n = c1t
+					if math.hypot(c2n[0] - c2t[0], c2n[1] - c2t[1]) > 4 * scale:
+						c2n = c2t
+					seg['oc1'] = c1n
+					seg['oc2'] = c2n
 
 			# join segments: weld smooth junctions, miter corners
 			newNodes = []
