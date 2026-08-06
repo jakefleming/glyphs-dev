@@ -150,7 +150,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 518))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 572))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -202,32 +202,37 @@ class ProportionalWeight(FilterWithDialog):
 		# Weight is units either side of 0; the % sliders run 0-200 with
 		# neutral 100 centered. Harmony/Balance are effect strengths, so
 		# their neutral (0 = off) is the left edge.
-		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 486, 80, 26))
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 540, 80, 26))
 		resetBtn.setTitle_("Reset")
 		resetBtn.setBezelStyle_(1)  # rounded
 		resetBtn.setTarget_(self)
 		resetBtn.setAction_("resetCallback:")
 		view.addSubview_(resetBtn)
 
-		label("Weight", 460)
-		self.valueField = valueField(460, "+0")
-		self.slider = slider(430, -200, 200, 0)
-		rowReset(460, 0)
+		label("Weight", 514)
+		self.valueField = valueField(514, "+0")
+		self.slider = slider(484, -200, 200, 0)
+		rowReset(514, 0)
 
-		label("Vertical", 406)
-		self.vpctField = valueField(406, "100%")
-		self.vpctSlider = slider(376, 0, 200, 100)
-		rowReset(406, 1)
+		label("Vertical", 460)
+		self.vpctField = valueField(460, "100%")
+		self.vpctSlider = slider(430, 0, 200, 100)
+		rowReset(460, 1)
 
-		label("Counters", 352)
-		self.cpctField = valueField(352, "100%")
-		self.cpctSlider = slider(322, 0, 200, 100)
-		rowReset(352, 2)
+		label("Counters", 406)
+		self.cpctField = valueField(406, "100%")
+		self.cpctSlider = slider(376, 0, 200, 100)
+		rowReset(406, 2)
 
-		label("Width", 298)
-		self.widthField = valueField(298, "100%")
-		self.widthSlider = slider(268, 0, 200, 100)
-		rowReset(298, 3)
+		label("Width", 352)
+		self.widthField = valueField(352, "100%")
+		self.widthSlider = slider(322, 0, 200, 100)
+		rowReset(352, 3)
+
+		label("Height", 298)
+		self.heightField = valueField(298, "100%")
+		self.heightSlider = slider(268, 0, 200, 100)
+		rowReset(298, 7)
 
 		label("Harmony", 244)
 		self.harmonyField = valueField(244, "0%")
@@ -247,16 +252,17 @@ class ProportionalWeight(FilterWithDialog):
 		view.addSubview_(self.pad)
 		rowReset(130, 6)
 
-		# row metadata for typed input and per-row reset:
-		# field -> (slider, default) ; pad handled separately via tag 6
-		self._rowBySlider = [
-			(self.slider, self.valueField, 0),
-			(self.vpctSlider, self.vpctField, 100),
-			(self.cpctSlider, self.cpctField, 100),
-			(self.widthSlider, self.widthField, 100),
-			(self.harmonySlider, self.harmonyField, 0),
-			(self.balanceSlider, self.balanceField, 0),
-		]
+		# row metadata for typed input and per-row reset, keyed by tag;
+		# the pad is tag 6, handled separately
+		self._rowBySlider = {
+			0: (self.slider, self.valueField, 0),
+			1: (self.vpctSlider, self.vpctField, 100),
+			2: (self.cpctSlider, self.cpctField, 100),
+			3: (self.widthSlider, self.widthField, 100),
+			4: (self.harmonySlider, self.harmonyField, 0),
+			5: (self.balanceSlider, self.balanceField, 0),
+			7: (self.heightSlider, self.heightField, 100),
+		}
 
 		self.dialog = view
 		self._origWidths = {}
@@ -273,6 +279,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.widthSlider.setDoubleValue_(100)
 		self.harmonySlider.setDoubleValue_(0)
 		self.balanceSlider.setDoubleValue_(0)
+		self.heightSlider.setDoubleValue_(100)
 		self.pad.val = (0.0, 0.0)
 		self.pad.setNeedsDisplay_(True)
 		self.padField.setStringValue_("0, 0")
@@ -312,7 +319,7 @@ class ProportionalWeight(FilterWithDialog):
 			self.pad.setNeedsDisplay_(True)
 			self.padChanged()
 			return
-		for sliderCtl, field, default in self._rowBySlider:
+		for sliderCtl, field, default in self._rowBySlider.values():
 			if sender is field:
 				try:
 					v = float(raw.replace("%", "").replace("+", "").strip())
@@ -331,6 +338,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.widthField.setStringValue_("%d%%" % round(self.widthSlider.doubleValue()))
 		self.harmonyField.setStringValue_("%d%%" % round(self.harmonySlider.doubleValue()))
 		self.balanceField.setStringValue_("%d%%" % round(self.balanceSlider.doubleValue()))
+		self.heightField.setStringValue_("%d%%" % round(self.heightSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -746,6 +754,10 @@ class ProportionalWeight(FilterWithDialog):
 				bpct = float(customParameters['balance'])
 			else:
 				bpct = self.balanceSlider.doubleValue()
+			if 'height' in customParameters:
+				hpct = float(customParameters['height'])
+			else:
+				hpct = self.heightSlider.doubleValue()
 			if 'countershiftx' in customParameters:
 				csx = float(customParameters['countershiftx'])
 			else:
@@ -803,6 +815,12 @@ class ProportionalWeight(FilterWithDialog):
 					layer.applyTransform((w, 0, 0, 1, 0, 0))
 				layer.width = orig * w
 
+			# height: scale outlines vertically around the baseline (y=0);
+			# vertical metrics are font-global and stay untouched
+			h = max(25.0, hpct) / 100.0
+			if abs(h - 1.0) >= 0.0001:
+				layer.applyTransform((1, 0, 0, h, 0, 0))
+
 			# cleanup LAST: repair what the offset and the non-uniform scales
 			# did to the curves (balance evens the handles, harmony restores
 			# G2 continuity at smooth joins)
@@ -813,13 +831,14 @@ class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; harmony:%s; "
-			"balance:%s; countershiftx:%s; countershifty:%s") % (
+		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; height:%s; "
+			"harmony:%s; balance:%s; countershiftx:%s; countershifty:%s") % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
 			round(self.cpctSlider.doubleValue()),
 			round(self.widthSlider.doubleValue()),
+			round(self.heightSlider.doubleValue()),
 			round(self.harmonySlider.doubleValue()),
 			round(self.balanceSlider.doubleValue()),
 			round(self.pad.val[0] * PAD_RANGE),
