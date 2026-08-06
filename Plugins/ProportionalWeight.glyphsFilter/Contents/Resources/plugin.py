@@ -132,28 +132,32 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(s)
 			return s
 
+		# convention: "no change" sits at the center of every slider.
+		# Weight is units either side of 0; the % sliders run 0-200 with
+		# neutral 100 centered. Harmony/Balance are effect strengths, so
+		# their neutral (0 = off) is the left edge.
 		label("Weight", 314)
-		self.valueField = valueField(314, "0")
+		self.valueField = valueField(314, "+0")
 		self.slider = slider(284, -200, 200, 0)
 
-		label("Vertical %", 260)
-		self.vpctField = valueField(260, "40")
-		self.vpctSlider = slider(230, 0, 200, 40)
+		label("Vertical", 260)
+		self.vpctField = valueField(260, "100%")
+		self.vpctSlider = slider(230, 0, 200, 100)
 
-		label("Counters %", 206)
-		self.cpctField = valueField(206, "100")
-		self.cpctSlider = slider(176, 0, 150, 100)
+		label("Counters", 206)
+		self.cpctField = valueField(206, "100%")
+		self.cpctSlider = slider(176, 0, 200, 100)
 
-		label("Width %", 152)
-		self.widthField = valueField(152, "100")
-		self.widthSlider = slider(122, 50, 200, 100)
+		label("Width", 152)
+		self.widthField = valueField(152, "100%")
+		self.widthSlider = slider(122, 0, 200, 100)
 
-		label("Harmony %", 98)
-		self.harmonyField = valueField(98, "0")
+		label("Harmony", 98)
+		self.harmonyField = valueField(98, "0%")
 		self.harmonySlider = slider(68, 0, 100, 0)
 
-		label("Balance %", 44)
-		self.balanceField = valueField(44, "0")
+		label("Balance", 44)
+		self.balanceField = valueField(44, "0%")
 		self.balanceSlider = slider(14, 0, 100, 0)
 
 		self.dialog = view
@@ -165,12 +169,12 @@ class ProportionalWeight(FilterWithDialog):
 		self._origWidths = {}
 
 	def sliderCallback_(self, sender):
-		self.valueField.setStringValue_("%d" % round(self.slider.doubleValue()))
-		self.vpctField.setStringValue_("%d" % round(self.vpctSlider.doubleValue()))
-		self.cpctField.setStringValue_("%d" % round(self.cpctSlider.doubleValue()))
-		self.widthField.setStringValue_("%d" % round(self.widthSlider.doubleValue()))
-		self.harmonyField.setStringValue_("%d" % round(self.harmonySlider.doubleValue()))
-		self.balanceField.setStringValue_("%d" % round(self.balanceSlider.doubleValue()))
+		self.valueField.setStringValue_("%+d" % round(self.slider.doubleValue()))
+		self.vpctField.setStringValue_("%d%%" % round(self.vpctSlider.doubleValue()))
+		self.cpctField.setStringValue_("%d%%" % round(self.cpctSlider.doubleValue()))
+		self.widthField.setStringValue_("%d%%" % round(self.widthSlider.doubleValue()))
+		self.harmonyField.setStringValue_("%d%%" % round(self.harmonySlider.doubleValue()))
+		self.balanceField.setStringValue_("%d%%" % round(self.balanceSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -573,7 +577,8 @@ class ProportionalWeight(FilterWithDialog):
 							layer.applyTransform((sx, 0, 0, sy, tx, ty))
 
 			# width: condense/extend outlines and advance width together
-			w = wpct / 100.0
+			# (floor keeps the slider's 0 end from collapsing the glyph)
+			w = max(25.0, wpct) / 100.0
 			if customParameters:
 				# fresh layer copy per call at export time: safe to multiply
 				if abs(w - 1.0) >= 0.0001:
