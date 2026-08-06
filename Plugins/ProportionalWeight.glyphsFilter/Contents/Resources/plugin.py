@@ -164,16 +164,28 @@ class ProportionalWeight(FilterWithDialog):
 			return f
 
 		def valueField(y, initial):
-			f = NSTextField.alloc().initWithFrame_(NSMakeRect(222, y, 46, 17))
+			f = NSTextField.alloc().initWithFrame_(NSMakeRect(216, y - 2, 52, 20))
 			f.setStringValue_(initial)
-			f.setBezeled_(False)
-			f.setDrawsBackground_(False)
-			f.setEditable_(False)
-			f.setSelectable_(False)
+			f.setBezeled_(True)
+			f.setDrawsBackground_(True)
+			f.setEditable_(True)
+			f.setSelectable_(True)
 			f.setAlignment_(1)  # right-aligned on macOS
 			f.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(11, 0))
+			f.setTarget_(self)
+			f.setAction_("fieldChanged:")
 			view.addSubview_(f)
 			return f
+
+		def rowReset(y, tag):
+			b = NSButton.alloc().initWithFrame_(NSMakeRect(192, y - 2, 20, 20))
+			b.setTitle_("↺")
+			b.setBordered_(False)
+			b.setTarget_(self)
+			b.setAction_("resetRow:")
+			b.setTag_(tag)
+			view.addSubview_(b)
+			return b
 
 		def slider(y, minV, maxV, initial):
 			s = NSSlider.alloc().initWithFrame_(NSMakeRect(10, y, 258, 24))
@@ -200,26 +212,32 @@ class ProportionalWeight(FilterWithDialog):
 		label("Weight", 460)
 		self.valueField = valueField(460, "+0")
 		self.slider = slider(430, -200, 200, 0)
+		rowReset(460, 0)
 
 		label("Vertical", 406)
 		self.vpctField = valueField(406, "100%")
 		self.vpctSlider = slider(376, 0, 200, 100)
+		rowReset(406, 1)
 
 		label("Counters", 352)
 		self.cpctField = valueField(352, "100%")
 		self.cpctSlider = slider(322, 0, 200, 100)
+		rowReset(352, 2)
 
 		label("Width", 298)
 		self.widthField = valueField(298, "100%")
 		self.widthSlider = slider(268, 0, 200, 100)
+		rowReset(298, 3)
 
 		label("Harmony", 244)
 		self.harmonyField = valueField(244, "0%")
 		self.harmonySlider = slider(214, 0, 100, 0)
+		rowReset(244, 4)
 
 		label("Balance", 190)
 		self.balanceField = valueField(190, "0%")
 		self.balanceSlider = slider(160, 0, 100, 0)
+		rowReset(190, 5)
 
 		label("Counter Position", 130)
 		self.padField = valueField(130, "0, 0")
@@ -227,6 +245,18 @@ class ProportionalWeight(FilterWithDialog):
 		self.pad.val = (0.0, 0.0)
 		self.pad.owner = self
 		view.addSubview_(self.pad)
+		rowReset(130, 6)
+
+		# row metadata for typed input and per-row reset:
+		# field -> (slider, default) ; pad handled separately via tag 6
+		self._rowBySlider = [
+			(self.slider, self.valueField, 0),
+			(self.vpctSlider, self.vpctField, 100),
+			(self.cpctSlider, self.cpctField, 100),
+			(self.widthSlider, self.widthField, 100),
+			(self.harmonySlider, self.harmonyField, 0),
+			(self.balanceSlider, self.balanceField, 0),
+		]
 
 		self.dialog = view
 		self._origWidths = {}
@@ -253,6 +283,46 @@ class ProportionalWeight(FilterWithDialog):
 		self.padField.setStringValue_("%+d, %+d" % (
 			round(self.pad.val[0] * PAD_RANGE), round(self.pad.val[1] * PAD_RANGE)))
 		self.update()
+
+	def resetRow_(self, sender):
+		tag = sender.tag()
+		if tag == 6:
+			self.pad.val = (0.0, 0.0)
+			self.pad.setNeedsDisplay_(True)
+			self.padField.setStringValue_("0, 0")
+			self.update()
+			return
+		sliderCtl, field, default = self._rowBySlider[tag]
+		sliderCtl.setDoubleValue_(default)
+		self.sliderCallback_(sender)
+
+	def fieldChanged_(self, sender):
+		raw = sender.stringValue()
+		if sender is self.padField:
+			try:
+				parts = raw.replace("%", "").split(",")
+				x = float(parts[0].strip())
+				y = float(parts[1].strip()) if len(parts) > 1 else 0.0
+			except (ValueError, IndexError):
+				self.padChanged()  # restore display
+				return
+			x = max(-PAD_RANGE, min(PAD_RANGE, x))
+			y = max(-PAD_RANGE, min(PAD_RANGE, y))
+			self.pad.val = (x / PAD_RANGE, y / PAD_RANGE)
+			self.pad.setNeedsDisplay_(True)
+			self.padChanged()
+			return
+		for sliderCtl, field, default in self._rowBySlider:
+			if sender is field:
+				try:
+					v = float(raw.replace("%", "").replace("+", "").strip())
+				except ValueError:
+					self.sliderCallback_(sender)  # restore display
+					return
+				v = max(sliderCtl.minValue(), min(sliderCtl.maxValue(), v))
+				sliderCtl.setDoubleValue_(v)
+				self.sliderCallback_(sender)
+				return
 
 	def sliderCallback_(self, sender):
 		self.valueField.setStringValue_("%+d" % round(self.slider.doubleValue()))
