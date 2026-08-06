@@ -31,6 +31,64 @@ def _rayIntersect(P, d1, Q, d2):
 	return ((P[0] + t * d1[0], P[1] + t * d1[1]), t, s)
 
 
+def _lerpPt(a, b, t):
+	return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+
+def _bezPt(C, t):
+	mt = 1 - t
+	return (mt**3 * C[0][0] + 3 * mt**2 * t * C[1][0] + 3 * mt * t**2 * C[2][0] + t**3 * C[3][0],
+		mt**3 * C[0][1] + 3 * mt**2 * t * C[1][1] + 3 * mt * t**2 * C[2][1] + t**3 * C[3][1])
+
+
+def _bezSplit(C, t):
+	"""de Casteljau split: returns (left4, right4)."""
+	p01 = _lerpPt(C[0], C[1], t)
+	p12 = _lerpPt(C[1], C[2], t)
+	p23 = _lerpPt(C[2], C[3], t)
+	p012 = _lerpPt(p01, p12, t)
+	p123 = _lerpPt(p12, p23, t)
+	p = _lerpPt(p012, p123, t)
+	return (C[0], p01, p012, p), (p, p123, p23, C[3])
+
+
+def _segSegX(a, b, c, d):
+	r = (b[0] - a[0], b[1] - a[1])
+	s = (d[0] - c[0], d[1] - c[1])
+	den = r[0] * s[1] - r[1] * s[0]
+	if abs(den) < 1e-12:
+		return None
+	q = (c[0] - a[0], c[1] - a[1])
+	u = (q[0] * s[1] - q[1] * s[0]) / den
+	v = (q[0] * r[1] - q[1] * r[0]) / den
+	if -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001:
+		return u, v, (a[0] + u * r[0], a[1] + u * r[1])
+	return None
+
+
+def _crossElems(Apts, Bpts):
+	"""First crossing between two polylines, preferring near A's end and
+	B's start. Skips the shared corner point itself. Returns (tA, tB, X)."""
+	best = None
+	na, nb = len(Apts) - 1, len(Bpts) - 1
+	for i in range(na):
+		for j in range(nb):
+			r = _segSegX(Apts[i], Apts[i + 1], Bpts[j], Bpts[j + 1])
+			if r is None:
+				continue
+			u, v, X = r
+			tA = (i + u) / na
+			tB = (j + v) / nb
+			if tA > 0.999 and tB < 0.001:
+				continue
+			score = (1 - tA) + tB
+			if best is None or score < best[0]:
+				best = (score, tA, tB, X)
+	if best is None:
+		return None
+	return best[1], best[2], best[3]
+
+
 class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
@@ -256,54 +314,95 @@ class ProportionalWeight(FilterWithDialog):
 					seg['oc1'] = c1n
 					seg['oc2'] = c2n
 
-			# join segments: weld smooth junctions, miter corners
-			newNodes = []
-			startNodes = []  # per segment: the joined node where it now begins
+			# phase 1: decide every junction, trimming overlapped curve ends
 			nsegs = len(segs)
+			joins = []
 			for i in range(nsegs):
 				prev = segs[i - 1]
 				cur = segs[i]
-				E1 = prev['oB']  # end of previous offset segment
-				E2 = cur['oA']  # start of current offset segment
+				E1 = prev['oB']
+				E2 = cur['oA']
 				P = cur['A']  # original corner position
-				endType = CURVE if prev['c1'] is not None else LINE
 				gap = math.hypot(E1[0] - E2[0], E1[1] - E2[1])
-
 				bothLines = prev['c1'] is None and cur['c1'] is None
+
 				if cur['smoothA'] or gap < WELD_EPS:
 					W = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
-					n = GSNode(NSMakePoint(W[0], W[1]), endType)
-					n.smooth = bool(cur['smoothA'])
-					newNodes.append(n)
-				else:
-					hit = _rayIntersect(E1, prev['t1'], E2, cur['t0'])
-					mitered = False
-					if hit is not None:
-						M, t, s = hit
-						if math.hypot(M[0] - P[0], M[1] - P[1]) <= MITER_LIMIT * scale:
-							if bothLines:
-								# line corners collapse to the single intersection:
-								# extends edges when they gap (miter), trims them
-								# when they overlap (convex corner, thinning)
-								newNodes.append(GSNode(NSMakePoint(M[0], M[1]), LINE))
-								mitered = True
-							elif t >= -0.01 and s <= 0.01:
-								# curve corner, edges gap apart: keep both curve
-								# endpoints and bridge through the miter point
-								newNodes.append(GSNode(NSMakePoint(E1[0], E1[1]), endType))
-								newNodes.append(GSNode(NSMakePoint(M[0], M[1]), LINE))
-								newNodes.append(GSNode(NSMakePoint(E2[0], E2[1]), LINE))
-								mitered = True
+					prev['oB'] = cur['oA'] = W
+					joins.append(('weld', W, bool(cur['smoothA'])))
+					continue
+
+				hit = _rayIntersect(E1, prev['t1'], E2, cur['t0'])
+				if hit is not None:
+					M, t, s = hit
+					if math.hypot(M[0] - P[0], M[1] - P[1]) <= MITER_LIMIT * scale:
+						if bothLines:
+							prev['oB'] = cur['oA'] = M
+							joins.append(('single', M))
+							continue
+						if t >= -0.01 and s <= 0.01:
+							# gap opens: bridge E1 -> miter point -> E2
+							joins.append(('chain', E1, M, E2))
+							continue
+						# curve corner, edges overlap: trim both elements to
+						# their actual intersection (de Casteljau split)
+						pElem = ((prev['oA'], prev['oc1'], prev['oc2'], prev['oB'])
+							if prev['c1'] is not None else (prev['oA'], prev['oB']))
+						cElem = ((cur['oA'], cur['oc1'], cur['oc2'], cur['oB'])
+							if cur['c1'] is not None else (cur['oA'], cur['oB']))
+						pPts = ([_bezPt(pElem, k / 24.0) for k in range(25)]
+							if len(pElem) == 4 else list(pElem))
+						cPts = ([_bezPt(cElem, k / 24.0) for k in range(25)]
+							if len(cElem) == 4 else list(cElem))
+						x = _crossElems(pPts, cPts)
+						if x is not None:
+							tA, tB, X = x
+							if len(pElem) == 4:
+								left, _ = _bezSplit(pElem, tA)
+								prev['oc1'], prev['oc2'] = left[1], left[2]
+								pEnd = left[3]
 							else:
-								# curve corner, edges overlap: welding is the safe
-								# trim (a real bezier trim would be better)
-								W = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
-								newNodes.append(GSNode(NSMakePoint(W[0], W[1]), endType))
-								mitered = True
-					if not mitered:
-						# bevel fallback: straight line E1 -> E2
-						newNodes.append(GSNode(NSMakePoint(E1[0], E1[1]), endType))
-						newNodes.append(GSNode(NSMakePoint(E2[0], E2[1]), LINE))
+								pEnd = X
+							if len(cElem) == 4:
+								_, right = _bezSplit(cElem, tB)
+								cur['oc1'], cur['oc2'] = right[1], right[2]
+								cStart = right[0]
+							else:
+								cStart = X
+							J = ((pEnd[0] + cStart[0]) / 2.0, (pEnd[1] + cStart[1]) / 2.0)
+							prev['oB'] = cur['oA'] = J
+							joins.append(('single', J))
+							continue
+						# no crossing found: weld as fallback
+						W = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
+						prev['oB'] = cur['oA'] = W
+						joins.append(('weld', W, False))
+						continue
+				# parallel tangents or miter too long: bevel
+				joins.append(('bevel', E1, E2))
+
+			# phase 2: emit nodes
+			newNodes = []
+			startNodes = []  # per segment: the joined node where it now begins
+			for i in range(nsegs):
+				prev = segs[i - 1]
+				cur = segs[i]
+				endType = CURVE if prev['c1'] is not None else LINE
+				j = joins[i]
+				if j[0] == 'weld':
+					n = GSNode(NSMakePoint(j[1][0], j[1][1]), endType)
+					n.smooth = j[2]
+					newNodes.append(n)
+				elif j[0] == 'single':
+					# the shared endpoint after trim/miter: prev['oB'] holds it
+					newNodes.append(GSNode(NSMakePoint(prev['oB'][0], prev['oB'][1]), endType))
+				elif j[0] == 'chain':
+					newNodes.append(GSNode(NSMakePoint(j[1][0], j[1][1]), endType))
+					newNodes.append(GSNode(NSMakePoint(j[2][0], j[2][1]), LINE))
+					newNodes.append(GSNode(NSMakePoint(j[3][0], j[3][1]), LINE))
+				else:  # bevel
+					newNodes.append(GSNode(NSMakePoint(j[1][0], j[1][1]), endType))
+					newNodes.append(GSNode(NSMakePoint(j[2][0], j[2][1]), LINE))
 
 				startNodes.append(newNodes[-1])
 
