@@ -38,7 +38,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 232))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 340))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -74,21 +74,29 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(s)
 			return s
 
-		label("Weight", 206)
-		self.valueField = valueField(206, "0")
-		self.slider = slider(176, -200, 200, 0)
+		label("Weight", 314)
+		self.valueField = valueField(314, "0")
+		self.slider = slider(284, -200, 200, 0)
 
-		label("Vertical %", 152)
-		self.vpctField = valueField(152, "40")
-		self.vpctSlider = slider(122, 0, 200, 40)
+		label("Vertical %", 260)
+		self.vpctField = valueField(260, "40")
+		self.vpctSlider = slider(230, 0, 200, 40)
 
-		label("Counters %", 98)
-		self.cpctField = valueField(98, "100")
-		self.cpctSlider = slider(68, 0, 150, 100)
+		label("Counters %", 206)
+		self.cpctField = valueField(206, "100")
+		self.cpctSlider = slider(176, 0, 150, 100)
 
-		label("Width %", 44)
-		self.widthField = valueField(44, "100")
-		self.widthSlider = slider(14, 50, 200, 100)
+		label("Width %", 152)
+		self.widthField = valueField(152, "100")
+		self.widthSlider = slider(122, 50, 200, 100)
+
+		label("Harmony %", 98)
+		self.harmonyField = valueField(98, "0")
+		self.harmonySlider = slider(68, 0, 100, 0)
+
+		label("Balance %", 44)
+		self.balanceField = valueField(44, "0")
+		self.balanceSlider = slider(14, 0, 100, 0)
 
 		self.dialog = view
 		self._origWidths = {}
@@ -103,6 +111,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.vpctField.setStringValue_("%d" % round(self.vpctSlider.doubleValue()))
 		self.cpctField.setStringValue_("%d" % round(self.cpctSlider.doubleValue()))
 		self.widthField.setStringValue_("%d" % round(self.widthSlider.doubleValue()))
+		self.harmonyField.setStringValue_("%d" % round(self.harmonySlider.doubleValue()))
+		self.balanceField.setStringValue_("%d" % round(self.balanceSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -309,6 +319,89 @@ class ProportionalWeight(FilterWithDialog):
 		layer.shapes = newShapes
 		return True
 
+	# ---------------- harmony / balance ----------------
+
+	@objc.python_method
+	def balanceLayer(self, layer, strength):
+		"""Equalize the two handle fractions of each curve segment (each
+		handle as a fraction of the distance to the tangent intersection),
+		preserving endpoints and tangent directions."""
+		if strength <= 0:
+			return
+		for path in layer.shapes:
+			if not isinstance(path, GSPath):
+				continue
+			nodes = list(path.nodes)
+			cnt = len(nodes)
+			for i, n in enumerate(nodes):
+				if n.type != CURVE:
+					continue
+				c2 = nodes[(i - 1) % cnt]
+				c1 = nodes[(i - 2) % cnt]
+				A = nodes[(i - 3) % cnt]
+				if c1.type != OFFCURVE or c2.type != OFFCURVE or A.type == OFFCURVE:
+					continue
+				Ap, c1p, c2p, Bp = A.position, c1.position, c2.position, n.position
+				dA = _unit(c1p.x - Ap.x, c1p.y - Ap.y)
+				dB = _unit(c2p.x - Bp.x, c2p.y - Bp.y)
+				if dA is None or dB is None:
+					continue  # retracted handle
+				hit = _rayIntersect((Ap.x, Ap.y), dA, (Bp.x, Bp.y), dB)
+				if hit is None:
+					continue
+				T, t, s = hit
+				if t < 1.0 or s < 1.0:
+					continue  # inflected or degenerate: leave alone
+				fa = math.hypot(c1p.x - Ap.x, c1p.y - Ap.y) / t
+				fb = math.hypot(c2p.x - Bp.x, c2p.y - Bp.y) / s
+				m = (fa + fb) / 2.0
+				m = max(0.05, min(0.95, m))
+				g1 = (Ap.x + dA[0] * m * t, Ap.y + dA[1] * m * t)
+				g2 = (Bp.x + dB[0] * m * s, Bp.y + dB[1] * m * s)
+				k = strength
+				c1.position = NSMakePoint(c1p.x + (g1[0] - c1p.x) * k, c1p.y + (g1[1] - c1p.y) * k)
+				c2.position = NSMakePoint(c2p.x + (g2[0] - c2p.x) * k, c2p.y + (g2[1] - c2p.y) * k)
+
+	@objc.python_method
+	def harmonizeLayer(self, layer, strength):
+		"""Slide each smooth on-curve node between two curve segments along
+		its handle line to the position where curvature is continuous (G2).
+		Iterates because neighboring nodes influence each other."""
+		if strength <= 0:
+			return
+		for _pass in range(3):
+			for path in layer.shapes:
+				if not isinstance(path, GSPath):
+					continue
+				nodes = list(path.nodes)
+				cnt = len(nodes)
+				for i, n in enumerate(nodes):
+					if n.type != CURVE or not n.smooth:
+						continue
+					a2 = nodes[(i - 1) % cnt]
+					a1 = nodes[(i - 2) % cnt]
+					b1 = nodes[(i + 1) % cnt]
+					b2 = nodes[(i + 2) % cnt]
+					if (a1.type != OFFCURVE or a2.type != OFFCURVE
+							or b1.type != OFFCURVE or b2.type != OFFCURVE):
+						continue  # needs a curve on both sides
+					P2, P1 = a2.position, a1.position
+					Q1, Q2 = b1.position, b2.position
+					dx, dy = Q1.x - P2.x, Q1.y - P2.y
+					D = math.hypot(dx, dy)
+					if D < 1e-6:
+						continue
+					ux, uy = dx / D, dy / D
+					hIn = abs((P1.x - P2.x) * uy - (P1.y - P2.y) * ux)
+					hOut = abs((Q2.x - P2.x) * uy - (Q2.y - P2.y) * ux)
+					if hIn < 0.5 or hOut < 0.5:
+						continue  # one side nearly straight: sliding cannot fix it
+					r = math.sqrt(hIn) / (math.sqrt(hIn) + math.sqrt(hOut))
+					gx, gy = P2.x + dx * r, P2.y + dy * r
+					p = n.position
+					k = strength
+					n.position = NSMakePoint(p.x + (gx - p.x) * k, p.y + (gy - p.y) * k)
+
 	# ---------------- filter ----------------
 
 	@objc.python_method
@@ -330,6 +423,18 @@ class ProportionalWeight(FilterWithDialog):
 				wpct = float(customParameters['width'])
 			else:
 				wpct = self.widthSlider.doubleValue()
+			if 'harmony' in customParameters:
+				hpct = float(customParameters['harmony'])
+			else:
+				hpct = self.harmonySlider.doubleValue()
+			if 'balance' in customParameters:
+				bpct = float(customParameters['balance'])
+			else:
+				bpct = self.balanceSlider.doubleValue()
+
+			# geometry cleanup first, weight on top of the cleaned outline
+			self.balanceLayer(layer, bpct / 100.0)
+			self.harmonizeLayer(layer, hpct / 100.0)
 
 			if abs(amount) >= 0.01:
 				before = layer.bounds
@@ -370,12 +475,14 @@ class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; amount:%s; vertical:%s; counters:%s; width:%s" % (
+		return "%s; amount:%s; vertical:%s; counters:%s; width:%s; harmony:%s; balance:%s" % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
 			round(self.cpctSlider.doubleValue()),
-			round(self.widthSlider.doubleValue()))
+			round(self.widthSlider.doubleValue()),
+			round(self.harmonySlider.doubleValue()),
+			round(self.balanceSlider.doubleValue()))
 
 	@objc.python_method
 	def __file__(self):
