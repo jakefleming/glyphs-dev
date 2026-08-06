@@ -432,10 +432,6 @@ class ProportionalWeight(FilterWithDialog):
 			else:
 				bpct = self.balanceSlider.doubleValue()
 
-			# geometry cleanup first, weight on top of the cleaned outline
-			self.balanceLayer(layer, bpct / 100.0)
-			self.harmonizeLayer(layer, hpct / 100.0)
-
 			if abs(amount) >= 0.01:
 				before = layer.bounds
 				if before.size.width > 0 and before.size.height > 0:
@@ -470,6 +466,12 @@ class ProportionalWeight(FilterWithDialog):
 				if abs(w - 1.0) >= 0.0001:
 					layer.applyTransform((w, 0, 0, 1, 0, 0))
 				layer.width = orig * w
+
+			# cleanup LAST: repair what the offset and the non-uniform scales
+			# did to the curves (balance evens the handles, harmony restores
+			# G2 continuity at smooth joins)
+			self.balanceLayer(layer, bpct / 100.0)
+			self.harmonizeLayer(layer, hpct / 100.0)
 		except Exception:
 			print(traceback.format_exc())
 
