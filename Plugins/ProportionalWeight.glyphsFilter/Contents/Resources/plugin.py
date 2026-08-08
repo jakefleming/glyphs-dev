@@ -3,16 +3,55 @@ from __future__ import division, print_function, unicode_literals
 
 import objc
 import math
+import os
 import traceback
 from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
 from AppKit import (NSView, NSSlider, NSTextField, NSMakeRect, NSFont, NSButton,
-	NSColor, NSBezierPath)
-from Foundation import NSMakePoint
+	NSColor, NSBezierPath, NSImage, NSFontAttributeName, NSForegroundColorAttributeName)
+from Foundation import NSMakePoint, NSString
 
 MITER_LIMIT = 10  # max corner extension, in multiples of the offset amount
 WELD_EPS = 0.25  # endpoints closer than this are welded, not joined
 PAD_RANGE = 60  # units of counter shift at full pad deflection
+
+
+def _c(r, g, b):
+	return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, 1.0)
+
+# lil Devil palette: flat cream panel, ink lines, one orange
+CREAM = _c(0.953, 0.937, 0.902)
+PAPER = _c(0.990, 0.982, 0.960)
+INK = _c(0.14, 0.13, 0.12)
+ORANGE = _c(0.922, 0.314, 0.027)
+
+
+class PWPanel(NSView):
+	"""Flat cream panel: title, section rules, mascot."""
+
+	def drawRect_(self, rect):
+		b = self.bounds()
+		CREAM.set()
+		NSBezierPath.fillRect_(b)
+		# title
+		title = NSString.stringWithString_("lil Devil")
+		attrs = {NSFontAttributeName: NSFont.systemFontOfSize_weight_(26, 0.56),
+			NSForegroundColorAttributeName: ORANGE}
+		size = title.sizeWithAttributes_(attrs)
+		title.drawAtPoint_withAttributes_(((b.size.width - size.width) / 2.0, b.size.height - 40), attrs)
+		# section rules
+		INK.set()
+		for (x1, y, x2) in getattr(self, 'rules', []):
+			p = NSBezierPath.bezierPath()
+			p.moveToPoint_((x1, y))
+			p.lineToPoint_((x2, y))
+			p.setLineWidth_(1.2)
+			p.stroke()
+		# mascot
+		devil = getattr(self, 'devil', None)
+		if devil is not None:
+			devil.drawInRect_fromRect_operation_fraction_(
+				NSMakeRect(438, 150, 156, 156), ((0, 0), (0, 0)), 2, 1.0)
 
 
 class ProportionalWeightPad(NSView):
@@ -27,11 +66,11 @@ class ProportionalWeightPad(NSView):
 	def drawRect_(self, rect):
 		b = self.bounds()
 		inset = 10
-		NSColor.controlBackgroundColor().set()
+		PAPER.set()
 		NSBezierPath.fillRect_(b)
-		NSColor.tertiaryLabelColor().set()
+		INK.set()
 		box = NSBezierPath.bezierPathWithRect_(NSMakeRect(1, 1, b.size.width - 2, b.size.height - 2))
-		box.setLineWidth_(1)
+		box.setLineWidth_(1.5)
 		box.stroke()
 		# center tick marks
 		cxm, cym = b.size.width / 2.0, b.size.height / 2.0
@@ -45,7 +84,7 @@ class ProportionalWeightPad(NSView):
 		val = getattr(self, 'val', (0.0, 0.0))
 		dx = cxm + val[0] * (cxm - inset)
 		dy = cym + val[1] * (cym - inset)
-		NSColor.systemBlueColor().set()
+		ORANGE.set()
 		NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(dx - 7, dy - 7, 14, 14)).fill()
 
 	def handleEvent_(self, event):
@@ -111,11 +150,11 @@ class PWKnob(NSView):
 		cx, cy = b.size.width / 2.0, b.size.height / 2.0
 		r = size / 2.0 - 4
 
-		NSColor.controlColor().set()
+		PAPER.set()
 		NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - r, cy - r, 2 * r, 2 * r)).fill()
-		NSColor.separatorColor().set()
+		INK.set()
 		ring = NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - r, cy - r, 2 * r, 2 * r))
-		ring.setLineWidth_(1)
+		ring.setLineWidth_(1.5)
 		ring.stroke()
 
 		aN = self._angle(self.neutral)
@@ -123,7 +162,7 @@ class PWKnob(NSView):
 
 		# neutral tick just outside the ring
 		tickRad = math.radians(90 - aN)
-		NSColor.tertiaryLabelColor().set()
+		INK.colorWithAlphaComponent_(0.45).set()
 		tick = NSBezierPath.bezierPath()
 		tick.moveToPoint_((cx + math.cos(tickRad) * (r + 1), cy + math.sin(tickRad) * (r + 1)))
 		tick.lineToPoint_((cx + math.cos(tickRad) * (r + 4), cy + math.sin(tickRad) * (r + 4)))
@@ -133,7 +172,7 @@ class PWKnob(NSView):
 		offNeutral = abs(self.val - self.neutral) > (self.maxV - self.minV) * 0.002
 		if offNeutral:
 			# accent arc from neutral to value
-			NSColor.systemOrangeColor().set()
+			ORANGE.set()
 			arc = NSBezierPath.bezierPath()
 			arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise_(
 				(cx, cy), r + 2.5, 90 - aN, 90 - aV, aV > aN)
@@ -141,7 +180,7 @@ class PWKnob(NSView):
 			arc.stroke()
 
 		# indicator line
-		(NSColor.systemOrangeColor() if offNeutral else NSColor.labelColor()).set()
+		(ORANGE if offNeutral else INK).set()
 		rad = math.radians(90 - aV)
 		ind = NSBezierPath.bezierPath()
 		ind.moveToPoint_((cx + math.cos(rad) * r * 0.35, cy + math.sin(rad) * r * 0.35))
@@ -253,7 +292,10 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 470, 452))
+		view = PWPanel.alloc().initWithFrame_(NSMakeRect(0, 0, 600, 496))
+		view.rules = [(12, 424, 430), (12, 282, 430), (12, 114, 588)]
+		devilPath = os.path.join(os.path.dirname(__file__), "devil.svg")
+		view.devil = NSImage.alloc().initWithContentsOfFile_(devilPath)
 
 		def sectionTitle(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 14))
@@ -262,28 +304,32 @@ class ProportionalWeight(FilterWithDialog):
 			f.setDrawsBackground_(False)
 			f.setEditable_(False)
 			f.setSelectable_(False)
-			f.setTextColor_(NSColor.secondaryLabelColor())
-			f.setFont_(NSFont.systemFontOfSize_weight_(10, 0.3))
+			f.setTextColor_(INK)
+			f.setFont_(NSFont.systemFontOfSize_weight_(11, 0.4))
 			view.addSubview_(f)
 			return f
 
 		def knobLabel(cx, y, text):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(cx - 45, y, 90, 13))
-			f.setStringValue_(text)
+			f.setStringValue_(text.upper())
 			f.setBezeled_(False)
 			f.setDrawsBackground_(False)
 			f.setEditable_(False)
 			f.setSelectable_(False)
 			f.setAlignment_(2)  # center
-			f.setFont_(NSFont.systemFontOfSize_(10))
+			f.setTextColor_(INK)
+			f.setFont_(NSFont.systemFontOfSize_weight_(9, 0.3))
 			view.addSubview_(f)
 			return f
 
 		def valueField(cx, y, initial):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(cx - 28, y, 56, 19))
 			f.setStringValue_(initial)
-			f.setBezeled_(True)
+			f.setBezeled_(False)
+			f.setBordered_(True)
 			f.setDrawsBackground_(True)
+			f.setBackgroundColor_(PAPER)
+			f.setTextColor_(INK)
 			f.setEditable_(True)
 			f.setSelectable_(True)
 			f.setAlignment_(2)  # center
@@ -302,7 +348,7 @@ class ProportionalWeight(FilterWithDialog):
 			return k, f
 
 		# Reset (drag knobs vertically; Option = fine; double-click = reset)
-		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(380, 418, 80, 26))
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(506, 458, 80, 26))
 		resetBtn.setTitle_("Reset")
 		resetBtn.setBezelStyle_(1)
 		resetBtn.setTarget_(self)
@@ -310,30 +356,30 @@ class ProportionalWeight(FilterWithDialog):
 		view.addSubview_(resetBtn)
 
 		# WEIGHT: big center knob, flanked by its modifiers
-		sectionTitle("WEIGHT", 430)
-		self.slider, self.valueField = knob(235, 336, 88, -200, 200, 0, "Weight", "+0")
-		self.vpctSlider, self.vpctField = knob(95, 356, 48, 0, 200, 100, "Vertical", "100%")
-		self.cpctSlider, self.cpctField = knob(375, 356, 48, 0, 200, 100, "Counters", "100%")
+		sectionTitle("WEIGHT", 428)
+		self.slider, self.valueField = knob(235, 334, 88, -200, 200, 0, "Weight", "+0")
+		self.vpctSlider, self.vpctField = knob(95, 354, 48, 0, 200, 100, "Vertical", "100%")
+		self.cpctSlider, self.cpctField = knob(375, 354, 48, 0, 200, 100, "Counters", "100%")
 
 		# SHAPE: proportions + counter position pad
-		sectionTitle("SHAPE", 288)
-		self.widthSlider, self.widthField = knob(60, 216, 48, 0, 200, 100, "Width", "100%")
-		self.heightSlider, self.heightField = knob(150, 216, 48, 0, 200, 100, "Height", "100%")
-		self.tensionSlider, self.tensionField = knob(240, 216, 48, 50, 150, 100, "Tension", "100%")
-		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(330, 180, 84, 84))
+		sectionTitle("SHAPE", 286)
+		self.widthSlider, self.widthField = knob(60, 214, 48, 0, 200, 100, "Width", "100%")
+		self.heightSlider, self.heightField = knob(150, 214, 48, 0, 200, 100, "Height", "100%")
+		self.tensionSlider, self.tensionField = knob(240, 214, 48, 50, 150, 100, "Tension", "100%")
+		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(330, 178, 84, 84))
 		self.pad.val = (0.0, 0.0)
 		self.pad.owner = self
 		view.addSubview_(self.pad)
-		knobLabel(372, 165, "Counters XY")
-		self.padField = valueField(372, 144, "0, 0")
+		knobLabel(372, 163, "Counters XY")
+		self.padField = valueField(372, 142, "0, 0")
 
 		# PERFECT: cleanup + geometry knobs
-		sectionTitle("PERFECT", 120)
-		self.harmonySlider, self.harmonyField = knob(55, 52, 48, 0, 100, 0, "Harmony", "0%")
-		self.balanceSlider, self.balanceField = knob(145, 52, 48, 0, 100, 0, "Balance", "0%")
-		self.snapSlider, self.snapField = knob(235, 52, 48, 0, 100, 0, "Snap", "0%")
-		self.facetSlider, self.facetField = knob(325, 52, 48, 0, 100, 0, "Facets", "0%")
-		self.circSlider, self.circField = knob(415, 52, 48, 0, 100, 0, "Circular", "0%")
+		sectionTitle("PERFECT", 118)
+		self.harmonySlider, self.harmonyField = knob(60, 50, 48, 0, 100, 0, "Harmony", "0%")
+		self.balanceSlider, self.balanceField = knob(165, 50, 48, 0, 100, 0, "Balance", "0%")
+		self.snapSlider, self.snapField = knob(270, 50, 48, 0, 100, 0, "Snap", "0%")
+		self.facetSlider, self.facetField = knob(375, 50, 48, 0, 100, 0, "Facets", "0%")
+		self.circSlider, self.circField = knob(480, 50, 48, 0, 100, 0, "Circular", "0%")
 
 		# row metadata for typed input and per-row reset, keyed by tag;
 		# the pad is tag 6, handled separately
