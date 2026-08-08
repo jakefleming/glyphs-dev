@@ -35,10 +35,13 @@ class PWPanel(NSView):
 		NSBezierPath.fillRect_(b)
 		# title
 		title = NSString.stringWithString_("lil Devil")
-		attrs = {NSFontAttributeName: NSFont.systemFontOfSize_weight_(26, 0.56),
+		attrs = {NSFontAttributeName: NSFont.systemFontOfSize_weight_(32, 0.56),
 			NSForegroundColorAttributeName: ORANGE}
 		size = title.sizeWithAttributes_(attrs)
-		title.drawAtPoint_withAttributes_(((b.size.width - size.width) / 2.0, b.size.height - 40), attrs)
+		title.drawAtPoint_withAttributes_(((b.size.width - size.width) / 2.0, b.size.height - 48), attrs)
+		# status LED above Reset
+		ORANGE.set()
+		NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(541, 548, 9, 9)).fill()
 		# section rules
 		INK.set()
 		for (x1, y, x2) in getattr(self, 'rules', []):
@@ -294,8 +297,10 @@ class ProportionalWeight(FilterWithDialog):
 		self.actionButtonLabel = "Apply"
 
 		view = PWPanel.alloc().initWithFrame_(NSMakeRect(0, 0, 600, 560))
-		view.rules = [(12, 444, 430), (12, 272, 430), (12, 128, 430)]
-		view.devilRect = NSMakeRect(445, 290, 150, 150)
+		# short underlines like the pedal; devil oversized, bleeding off the
+		# right edge of the panel
+		view.rules = [(12, 444, 168), (12, 272, 150), (12, 128, 335)]
+		view.devilRect = NSMakeRect(430, 90, 330, 330)
 		devilPath = os.path.join(os.path.dirname(__file__), "devil.svg")
 		view.devil = NSImage.alloc().initWithContentsOfFile_(devilPath)
 
@@ -358,34 +363,34 @@ class ProportionalWeight(FilterWithDialog):
 		# WEIGHT: big center knob, flanked by its modifiers; one shared
 		# baseline for every label and value in the section
 		sectionTitle("WEIGHT", 448)
-		self.slider = knobOnly(235, 344, 92, -200, 200, 0)
-		self.vpctSlider = knobOnly(95, 366, 48, 0, 200, 100)
-		self.cpctSlider = knobOnly(375, 366, 48, 0, 200, 100)
-		knobLabel(235, 326, "Weight")
-		knobLabel(95, 326, "Vertical")
-		knobLabel(375, 326, "Counters")
-		self.valueField = valueField(235, 304, "+0")
-		self.vpctField = valueField(95, 304, "100%")
-		self.cpctField = valueField(375, 304, "100%")
+		self.slider = knobOnly(250, 344, 92, -200, 200, 0)
+		self.vpctSlider = knobOnly(100, 366, 48, 0, 200, 100)
+		self.cpctSlider = knobOnly(400, 366, 48, 0, 200, 100)
+		knobLabel(250, 326, "Weight")
+		knobLabel(100, 326, "Vertical")
+		knobLabel(400, 326, "Counters")
+		self.valueField = valueField(250, 304, "+0")
+		self.vpctField = valueField(100, 304, "100%")
+		self.cpctField = valueField(400, 304, "100%")
 
-		# SHAPE: proportions; pad lives in the right column under the devil
+		# SHAPE: proportions + counter pad, all in one row like the pedal
 		sectionTitle("SHAPE", 276)
-		self.widthSlider = knobOnly(95, 200, 48, 0, 200, 100)
-		self.heightSlider = knobOnly(235, 200, 48, 0, 200, 100)
-		self.tensionSlider = knobOnly(375, 200, 48, 50, 150, 100)
-		knobLabel(95, 182, "Width")
-		knobLabel(235, 182, "Height")
-		knobLabel(375, 182, "Tension")
-		self.widthField = valueField(95, 160, "100%")
-		self.heightField = valueField(235, 160, "100%")
-		self.tensionField = valueField(375, 160, "100%")
+		self.widthSlider = knobOnly(90, 200, 48, 0, 200, 100)
+		self.heightSlider = knobOnly(180, 200, 48, 0, 200, 100)
+		self.tensionSlider = knobOnly(270, 200, 48, 50, 150, 100)
+		knobLabel(90, 182, "Width")
+		knobLabel(180, 182, "Height")
+		knobLabel(270, 182, "Tension")
+		self.widthField = valueField(90, 160, "100%")
+		self.heightField = valueField(180, 160, "100%")
+		self.tensionField = valueField(270, 160, "100%")
 
-		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(470, 160, 100, 100))
+		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(327, 176, 96, 96))
 		self.pad.val = (0.0, 0.0)
 		self.pad.owner = self
 		view.addSubview_(self.pad)
-		knobLabel(520, 144, "Counters XY")
-		self.padField = valueField(520, 122, "0, 0")
+		knobLabel(375, 158, "Counters XY")
+		self.padField = valueField(375, 136, "0, 0")
 
 		# PERFECT: cleanup + geometry knobs
 		sectionTitle("PERFECT", 132)
