@@ -1057,13 +1057,42 @@ class ProportionalWeight(FilterWithDialog):
 			for n in nodes:
 				p = n.position
 				n.position = NSMakePoint(p.x + (p.y - y0) * tanT, p.y)
-			# re-verticalize the recorded tangents
+			# re-verticalize the recorded tangents, preserving handle LENGTH
+			# (keeping only the y component shortens shallow handles and
+			# creates kinks)
 			for i in verticalAt:
 				n = nodes[i]
 				for j in ((i - 1) % cnt, (i + 1) % cnt):
 					h = nodes[j]
-					if h.type == OFFCURVE:
-						h.position = NSMakePoint(n.position.x, h.position.y)
+					if h.type != OFFCURVE:
+						continue
+					dy = h.position.y - n.position.y
+					if abs(dy) < 1e-6:
+						continue
+					L = math.hypot(h.position.x - n.position.x, dy)
+					sign = 1.0 if dy > 0 else -1.0
+					h.position = NSMakePoint(n.position.x, n.position.y + sign * L)
+			# restore curvature continuity at the corrected nodes: slide each
+			# along its (vertical) handle line to the G2 position
+			for i in verticalAt:
+				n = nodes[i]
+				a2 = nodes[(i - 1) % cnt]
+				a1 = nodes[(i - 2) % cnt]
+				b1 = nodes[(i + 1) % cnt]
+				b2 = nodes[(i + 2) % cnt]
+				if (a1.type != OFFCURVE or a2.type != OFFCURVE
+						or b1.type != OFFCURVE or b2.type != OFFCURVE):
+					continue
+				x = n.position.x
+				dyLine = b1.position.y - a2.position.y
+				if abs(dyLine) < 1e-6:
+					continue
+				hIn = abs(a1.position.x - x)
+				hOut = abs(b2.position.x - x)
+				if hIn < 0.5 or hOut < 0.5:
+					continue
+				r = math.sqrt(hIn) / (math.sqrt(hIn) + math.sqrt(hOut))
+				n.position = NSMakePoint(x, a2.position.y + dyLine * r)
 
 	# ---------------- harmony / balance ----------------
 
