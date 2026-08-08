@@ -1249,14 +1249,15 @@ class ProportionalWeight(FilterWithDialog):
 					ax = amount
 					ay = amount * vpct / 100.0
 					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0):
-						# boolean cleanup: corner logic only resolves adjacent
-						# segments; junction spikes where non-adjacent edges
-						# cross (bowl meets stem) need an overlap pass
-						try:
-							layer.correctPathDirection()
-							layer.removeOverlap()
-						except Exception:
-							pass
+						# boolean cleanup, THIN DIRECTION ONLY: that is where
+						# non-adjacent edges cross and spike. When bolding it
+						# would merge separately drawn construction paths.
+						if amount < 0:
+							try:
+								layer.correctPathDirection()
+								layer.removeOverlap()
+							except Exception:
+								pass
 						after = layer.bounds
 						if after.size.width > 0 and after.size.height > 0:
 							# restore the original bounding box: proportions preserved
