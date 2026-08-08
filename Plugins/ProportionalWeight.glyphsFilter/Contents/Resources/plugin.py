@@ -1238,25 +1238,24 @@ class ProportionalWeight(FilterWithDialog):
 							layer.applyTransform((sx, 0, 0, sy, tx, ty))
 
 			# width: condense/extend outlines and advance width together
-			# (floor keeps the slider's 0 end from collapsing the glyph)
+			# (floor keeps the slider's 0 end from collapsing the glyph).
+			# NEVER touch layer.width when the knob is at 100: an apply pass
+			# that force-sets widths from a cache wrecks spacing font-wide.
 			w = max(25.0, wpct) / 100.0
-			if customParameters:
-				# fresh layer copy per call at export time: safe to multiply
-				if abs(w - 1.0) >= 0.0001:
-					layer.applyTransform((w, 0, 0, 1, 0, 0))
+			if abs(w - 1.0) >= 0.0001:
+				layer.applyTransform((w, 0, 0, 1, 0, 0))
+				if inEditView and not customParameters:
+					# live preview restores shapes (not width) between passes:
+					# anchor to the session baseline so it doesn't compound
+					widths = getattr(self, '_origWidths', None)
+					if widths is None:
+						widths = self._origWidths = {}
+					orig = widths.setdefault(layer.layerId, layer.width)
+					layer.width = orig * w
+				else:
+					# real application: relative, stateless, compounds in
+					# sync with the outline transform
 					layer.width = layer.width * w
-			else:
-				# the live preview re-runs the filter on the same layer object
-				# and only restores the shapes between passes, so an in-place
-				# width multiply compounds on every slider event. Set the
-				# width absolutely from the dialog session's cached original.
-				widths = getattr(self, '_origWidths', None)
-				if widths is None:
-					widths = self._origWidths = {}
-				orig = widths.setdefault(layer.layerId, layer.width)
-				if abs(w - 1.0) >= 0.0001:
-					layer.applyTransform((w, 0, 0, 1, 0, 0))
-				layer.width = orig * w
 
 			# height: scale outlines vertically around the baseline (y=0);
 			# vertical metrics are font-global and stay untouched
