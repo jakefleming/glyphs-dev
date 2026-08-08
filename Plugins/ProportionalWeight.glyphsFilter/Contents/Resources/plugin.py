@@ -150,7 +150,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 572))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 788))
 
 		def label(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
@@ -202,47 +202,67 @@ class ProportionalWeight(FilterWithDialog):
 		# Weight is units either side of 0; the % sliders run 0-200 with
 		# neutral 100 centered. Harmony/Balance are effect strengths, so
 		# their neutral (0 = off) is the left edge.
-		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 540, 80, 26))
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 756, 80, 26))
 		resetBtn.setTitle_("Reset")
 		resetBtn.setBezelStyle_(1)  # rounded
 		resetBtn.setTarget_(self)
 		resetBtn.setAction_("resetCallback:")
 		view.addSubview_(resetBtn)
 
-		label("Weight", 514)
-		self.valueField = valueField(514, "+0")
-		self.slider = slider(484, -200, 200, 0)
-		rowReset(514, 0)
+		label("Weight", 730)
+		self.valueField = valueField(730, "+0")
+		self.slider = slider(700, -200, 200, 0)
+		rowReset(730, 0)
 
-		label("Vertical", 460)
-		self.vpctField = valueField(460, "100%")
-		self.vpctSlider = slider(430, 0, 200, 100)
-		rowReset(460, 1)
+		label("Vertical", 676)
+		self.vpctField = valueField(676, "100%")
+		self.vpctSlider = slider(646, 0, 200, 100)
+		rowReset(676, 1)
 
-		label("Counters", 406)
-		self.cpctField = valueField(406, "100%")
-		self.cpctSlider = slider(376, 0, 200, 100)
-		rowReset(406, 2)
+		label("Counters", 622)
+		self.cpctField = valueField(622, "100%")
+		self.cpctSlider = slider(592, 0, 200, 100)
+		rowReset(622, 2)
 
-		label("Width", 352)
-		self.widthField = valueField(352, "100%")
-		self.widthSlider = slider(322, 0, 200, 100)
-		rowReset(352, 3)
+		label("Width", 568)
+		self.widthField = valueField(568, "100%")
+		self.widthSlider = slider(538, 0, 200, 100)
+		rowReset(568, 3)
 
-		label("Height", 298)
-		self.heightField = valueField(298, "100%")
-		self.heightSlider = slider(268, 0, 200, 100)
-		rowReset(298, 7)
+		label("Height", 514)
+		self.heightField = valueField(514, "100%")
+		self.heightSlider = slider(484, 0, 200, 100)
+		rowReset(514, 7)
 
-		label("Harmony", 244)
-		self.harmonyField = valueField(244, "0%")
-		self.harmonySlider = slider(214, 0, 100, 0)
-		rowReset(244, 4)
+		label("Harmony", 460)
+		self.harmonyField = valueField(460, "0%")
+		self.harmonySlider = slider(430, 0, 100, 0)
+		rowReset(460, 4)
 
-		label("Balance", 190)
-		self.balanceField = valueField(190, "0%")
-		self.balanceSlider = slider(160, 0, 100, 0)
-		rowReset(190, 5)
+		label("Balance", 406)
+		self.balanceField = valueField(406, "0%")
+		self.balanceSlider = slider(376, 0, 100, 0)
+		rowReset(406, 5)
+
+		label("Angle Snap", 352)
+		self.snapField = valueField(352, "0%")
+		self.snapSlider = slider(322, 0, 100, 0)
+		rowReset(352, 8)
+
+		label("Facets", 298)
+		self.facetField = valueField(298, "0%")
+		self.facetSlider = slider(268, 0, 100, 0)
+		rowReset(298, 9)
+
+		label("Circularize", 244)
+		self.circField = valueField(244, "0%")
+		self.circSlider = slider(214, 0, 100, 0)
+		rowReset(244, 10)
+
+		label("Tension", 190)
+		self.tensionField = valueField(190, "100%")
+		self.tensionSlider = slider(160, 50, 150, 100)
+		rowReset(190, 11)
 
 		label("Counter Position", 130)
 		self.padField = valueField(130, "0, 0")
@@ -262,6 +282,10 @@ class ProportionalWeight(FilterWithDialog):
 			4: (self.harmonySlider, self.harmonyField, 0),
 			5: (self.balanceSlider, self.balanceField, 0),
 			7: (self.heightSlider, self.heightField, 100),
+			8: (self.snapSlider, self.snapField, 0),
+			9: (self.facetSlider, self.facetField, 0),
+			10: (self.circSlider, self.circField, 0),
+			11: (self.tensionSlider, self.tensionField, 100),
 		}
 
 		self.dialog = view
@@ -280,6 +304,10 @@ class ProportionalWeight(FilterWithDialog):
 		self.harmonySlider.setDoubleValue_(0)
 		self.balanceSlider.setDoubleValue_(0)
 		self.heightSlider.setDoubleValue_(100)
+		self.snapSlider.setDoubleValue_(0)
+		self.facetSlider.setDoubleValue_(0)
+		self.circSlider.setDoubleValue_(0)
+		self.tensionSlider.setDoubleValue_(100)
 		self.pad.val = (0.0, 0.0)
 		self.pad.setNeedsDisplay_(True)
 		self.padField.setStringValue_("0, 0")
@@ -339,6 +367,10 @@ class ProportionalWeight(FilterWithDialog):
 		self.harmonyField.setStringValue_("%d%%" % round(self.harmonySlider.doubleValue()))
 		self.balanceField.setStringValue_("%d%%" % round(self.balanceSlider.doubleValue()))
 		self.heightField.setStringValue_("%d%%" % round(self.heightSlider.doubleValue()))
+		self.snapField.setStringValue_("%d%%" % round(self.snapSlider.doubleValue()))
+		self.facetField.setStringValue_("%d%%" % round(self.facetSlider.doubleValue()))
+		self.circField.setStringValue_("%d%%" % round(self.circSlider.doubleValue()))
+		self.tensionField.setStringValue_("%d%%" % round(self.tensionSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -642,6 +674,185 @@ class ProportionalWeight(FilterWithDialog):
 				p = n.position
 				n.position = NSMakePoint(p.x + dx, p.y + dy)
 
+	# ---------------- geometric perfection ----------------
+
+	@objc.python_method
+	def angleSnapLayer(self, layer, strength, grid=45.0):
+		"""Rotate straight edges toward the nearest multiple of `grid`
+		degrees, re-intersecting neighbors. All-line closed paths only."""
+		if strength <= 0:
+			return
+		for path in layer.shapes:
+			if not isinstance(path, GSPath) or not path.closed:
+				continue
+			nodes = list(path.nodes)
+			if len(nodes) < 3 or any(n.type == OFFCURVE for n in nodes):
+				continue
+			pts = [(n.position.x, n.position.y) for n in nodes]
+			cnt = len(pts)
+			dirs = []
+			mids = []
+			for i in range(cnt):
+				a, b = pts[i], pts[(i + 1) % cnt]
+				ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+				snapped = round(ang / grid) * grid
+				newang = math.radians(ang + (snapped - ang) * strength)
+				dirs.append((math.cos(newang), math.sin(newang)))
+				mids.append(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0))
+			newpts = []
+			for i in range(cnt):
+				d0, d1 = dirs[i - 1], dirs[i]
+				if abs(d0[0] * d1[1] - d0[1] * d1[0]) < 1e-4:
+					# adjacent edges became collinear: project onto the line
+					m = mids[i - 1]
+					px, py = pts[i][0] - m[0], pts[i][1] - m[1]
+					dot = px * d0[0] + py * d0[1]
+					newpts.append((m[0] + d0[0] * dot, m[1] + d0[1] * dot))
+					continue
+				hit = _rayIntersect(mids[i - 1], d0, mids[i], d1)
+				if hit is not None and math.hypot(hit[0][0] - pts[i][0], hit[0][1] - pts[i][1]) < 150:
+					newpts.append(hit[0])
+				else:
+					newpts.append(pts[i])
+			for n, p in zip(nodes, newpts):
+				n.position = NSMakePoint(p[0], p[1])
+
+	@objc.python_method
+	def facetEvenLayer(self, layer, strength):
+		"""Even out facet chains: runs of gentle same-direction turns get
+		their vertices redistributed at equal arc length. Lines only."""
+		if strength <= 0:
+			return
+		for path in layer.shapes:
+			if not isinstance(path, GSPath) or not path.closed:
+				continue
+			nodes = list(path.nodes)
+			if len(nodes) < 5 or any(n.type == OFFCURVE for n in nodes):
+				continue
+			pts = [(n.position.x, n.position.y) for n in nodes]
+			cnt = len(pts)
+			turns = []
+			for i in range(cnt):
+				d0 = _unit(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+				d1 = _unit(pts[(i + 1) % cnt][0] - pts[i][0], pts[(i + 1) % cnt][1] - pts[i][1])
+				if d0 is None or d1 is None:
+					turns.append(None)
+					continue
+				cross = d0[0] * d1[1] - d0[1] * d1[0]
+				dot = d0[0] * d1[0] + d0[1] * d1[1]
+				turns.append(math.degrees(math.atan2(cross, dot)))
+
+			def gentle(i):
+				t = turns[i]
+				return t is not None and 2.0 <= abs(t) <= 40.0
+
+			visited = set()
+			for start in range(cnt):
+				if start in visited or not gentle(start):
+					continue
+				# grow a same-sign run around `start`
+				sign = turns[start] > 0
+				run = [start]
+				j = (start + 1) % cnt
+				while j != start and gentle(j) and (turns[j] > 0) == sign and len(run) < cnt - 2:
+					run.append(j)
+					j = (j + 1) % cnt
+				k = (start - 1) % cnt
+				while k not in run and gentle(k) and (turns[k] > 0) == sign and len(run) < cnt - 2:
+					run.insert(0, k)
+					k = (k - 1) % cnt
+				visited.update(run)
+				if len(run) < 2:
+					continue
+				anchorA = (run[0] - 1) % cnt
+				anchorB = (run[-1] + 1) % cnt
+				chain = [anchorA] + run + [anchorB]
+				cpts = [pts[i] for i in chain]
+				seglens = [math.hypot(cpts[i + 1][0] - cpts[i][0], cpts[i + 1][1] - cpts[i][1])
+					for i in range(len(cpts) - 1)]
+				total = sum(seglens)
+				if total < 1e-6:
+					continue
+				# reposition interior vertices at even arc length
+				for idx in range(1, len(chain) - 1):
+					target = total * idx / (len(chain) - 1)
+					acc = 0.0
+					for si, sl in enumerate(seglens):
+						if acc + sl >= target or si == len(seglens) - 1:
+							f = (target - acc) / sl if sl > 1e-9 else 0.0
+							gx = cpts[si][0] + (cpts[si + 1][0] - cpts[si][0]) * f
+							gy = cpts[si][1] + (cpts[si + 1][1] - cpts[si][1]) * f
+							break
+						acc += sl
+					vi = chain[idx]
+					ox, oy = pts[vi]
+					nodes[vi].position = NSMakePoint(ox + (gx - ox) * strength, oy + (gy - oy) * strength)
+
+	@objc.python_method
+	def circularizeLayer(self, layer, strength):
+		"""Set each curve segment's handles to circular-arc tension
+		((4/3)tan(theta/4) of the tangent-intersection distances)."""
+		if strength <= 0:
+			return
+		for path in layer.shapes:
+			if not isinstance(path, GSPath):
+				continue
+			nodes = list(path.nodes)
+			cnt = len(nodes)
+			for i, n in enumerate(nodes):
+				if n.type != CURVE:
+					continue
+				c2 = nodes[(i - 1) % cnt]
+				c1 = nodes[(i - 2) % cnt]
+				A = nodes[(i - 3) % cnt]
+				if c1.type != OFFCURVE or c2.type != OFFCURVE or A.type == OFFCURVE:
+					continue
+				Ap, c1p, c2p, Bp = A.position, c1.position, c2.position, n.position
+				dA = _unit(c1p.x - Ap.x, c1p.y - Ap.y)
+				dB = _unit(c2p.x - Bp.x, c2p.y - Bp.y)
+				if dA is None or dB is None:
+					continue
+				hit = _rayIntersect((Ap.x, Ap.y), dA, (Bp.x, Bp.y), dB)
+				if hit is None:
+					continue
+				T, t, s = hit
+				if t < 1.0 or s < 1.0:
+					continue
+				cosTheta = max(-1.0, min(1.0, dA[0] * -dB[0] + dA[1] * -dB[1]))
+				theta = math.acos(cosTheta)
+				if theta < 0.02:
+					continue
+				f = (4.0 / 3.0) * math.tan(theta / 4.0)
+				g1 = (Ap.x + dA[0] * f * t, Ap.y + dA[1] * f * t)
+				g2 = (Bp.x + dB[0] * f * s, Bp.y + dB[1] * f * s)
+				k = strength
+				c1.position = NSMakePoint(c1p.x + (g1[0] - c1p.x) * k, c1p.y + (g1[1] - c1p.y) * k)
+				c2.position = NSMakePoint(c2p.x + (g2[0] - c2p.x) * k, c2p.y + (g2[1] - c2p.y) * k)
+
+	@objc.python_method
+	def tensionLayer(self, layer, factor):
+		"""Scale every curve handle's length by `factor` (1.0 = unchanged).
+		Longer = squarer (superellipse-ward), shorter = flatter."""
+		if abs(factor - 1.0) < 0.001:
+			return
+		for path in layer.shapes:
+			if not isinstance(path, GSPath):
+				continue
+			nodes = list(path.nodes)
+			cnt = len(nodes)
+			for i, n in enumerate(nodes):
+				if n.type != CURVE:
+					continue
+				c2 = nodes[(i - 1) % cnt]
+				c1 = nodes[(i - 2) % cnt]
+				A = nodes[(i - 3) % cnt]
+				if c1.type != OFFCURVE or c2.type != OFFCURVE or A.type == OFFCURVE:
+					continue
+				Ap, Bp = A.position, n.position
+				c1p, c2p = c1.position, c2.position
+				c1.position = NSMakePoint(Ap.x + (c1p.x - Ap.x) * factor, Ap.y + (c1p.y - Ap.y) * factor)
+				c2.position = NSMakePoint(Bp.x + (c2p.x - Bp.x) * factor, Bp.y + (c2p.y - Bp.y) * factor)
+
 	# ---------------- harmony / balance ----------------
 
 	@objc.python_method
@@ -758,6 +969,22 @@ class ProportionalWeight(FilterWithDialog):
 				hpct = float(customParameters['height'])
 			else:
 				hpct = self.heightSlider.doubleValue()
+			if 'anglesnap' in customParameters:
+				snapPct = float(customParameters['anglesnap'])
+			else:
+				snapPct = self.snapSlider.doubleValue()
+			if 'facets' in customParameters:
+				facetPct = float(customParameters['facets'])
+			else:
+				facetPct = self.facetSlider.doubleValue()
+			if 'circular' in customParameters:
+				circPct = float(customParameters['circular'])
+			else:
+				circPct = self.circSlider.doubleValue()
+			if 'tension' in customParameters:
+				tensionPct = float(customParameters['tension'])
+			else:
+				tensionPct = self.tensionSlider.doubleValue()
 			if 'countershiftx' in customParameters:
 				csx = float(customParameters['countershiftx'])
 			else:
@@ -821,6 +1048,12 @@ class ProportionalWeight(FilterWithDialog):
 			if abs(h - 1.0) >= 0.0001:
 				layer.applyTransform((1, 0, 0, h, 0, 0))
 
+			# geometric perfection on the transformed outline
+			self.angleSnapLayer(layer, snapPct / 100.0)
+			self.facetEvenLayer(layer, facetPct / 100.0)
+			self.circularizeLayer(layer, circPct / 100.0)
+			self.tensionLayer(layer, tensionPct / 100.0)
+
 			# cleanup LAST: repair what the offset and the non-uniform scales
 			# did to the curves (balance evens the handles, harmony restores
 			# G2 continuity at smooth joins)
@@ -832,7 +1065,8 @@ class ProportionalWeight(FilterWithDialog):
 	@objc.python_method
 	def generateCustomParameter(self):
 		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; height:%s; "
-			"harmony:%s; balance:%s; countershiftx:%s; countershifty:%s") % (
+			"harmony:%s; balance:%s; anglesnap:%s; facets:%s; circular:%s; "
+			"tension:%s; countershiftx:%s; countershifty:%s") % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
@@ -841,6 +1075,10 @@ class ProportionalWeight(FilterWithDialog):
 			round(self.heightSlider.doubleValue()),
 			round(self.harmonySlider.doubleValue()),
 			round(self.balanceSlider.doubleValue()),
+			round(self.snapSlider.doubleValue()),
+			round(self.facetSlider.doubleValue()),
+			round(self.circSlider.doubleValue()),
+			round(self.tensionSlider.doubleValue()),
 			round(self.pad.val[0] * PAD_RANGE),
 			round(self.pad.val[1] * PAD_RANGE))
 
