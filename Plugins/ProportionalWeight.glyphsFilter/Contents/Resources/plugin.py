@@ -430,6 +430,16 @@ class ProportionalWeight(FilterWithDialog):
 	def start(self):
 		# new dialog session: current layer widths are the new baseline
 		self._origWidths = {}
+		# tint the host window so the panel runs edge to edge: cream
+		# background behind the button row, transparent hidden titlebar
+		try:
+			w = self.dialog.window()
+			if w is not None:
+				w.setBackgroundColor_(CREAM)
+				w.setTitlebarAppearsTransparent_(True)
+				w.setTitleVisibility_(1)  # hidden
+		except Exception:
+			pass
 
 	def resetCallback_(self, sender):
 		self.slider.setDoubleValue_(0)
