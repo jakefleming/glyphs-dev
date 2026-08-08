@@ -808,6 +808,39 @@ class ProportionalWeight(FilterWithDialog):
 		layer.shapes = newShapes
 		return True
 
+	# ---------------- construction detection ----------------
+
+	@objc.python_method
+	def hasConstructionOverlap(self, layer):
+		"""True if two SAME-winding paths have intersecting bounding boxes:
+		deliberately overlapping construction strokes. Counters wind the
+		other way, so outer+counter does not trigger this."""
+		paths = [s for s in layer.shapes if isinstance(s, GSPath) and s.closed]
+		if len(paths) < 2:
+			return False
+
+		def areaAndBox(path):
+			pts = [(n.position.x, n.position.y) for n in path.nodes]
+			a = 0.0
+			for i in range(len(pts)):
+				x1, y1 = pts[i]
+				x2, y2 = pts[(i + 1) % len(pts)]
+				a += x1 * y2 - x2 * y1
+			xs = [p[0] for p in pts]
+			ys = [p[1] for p in pts]
+			return a, (min(xs), min(ys), max(xs), max(ys))
+
+		infos = [areaAndBox(p) for p in paths]
+		for i in range(len(infos)):
+			for j in range(i + 1, len(infos)):
+				ai, bi = infos[i]
+				aj, bj = infos[j]
+				if (ai > 0) != (aj > 0):
+					continue  # opposite winding: outer vs counter
+				if bi[0] < bj[2] and bj[0] < bi[2] and bi[1] < bj[3] and bj[1] < bi[3]:
+					return True
+		return False
+
 	# ---------------- counter shift ----------------
 
 	@objc.python_method
@@ -1250,9 +1283,10 @@ class ProportionalWeight(FilterWithDialog):
 					ay = amount * vpct / 100.0
 					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0):
 						# boolean cleanup, THIN DIRECTION ONLY: that is where
-						# non-adjacent edges cross and spike. When bolding it
-						# would merge separately drawn construction paths.
-						if amount < 0:
+						# non-adjacent edges cross and spike. Skipped when the
+						# glyph is built from overlapping construction paths,
+						# so the filter never merges deliberate structure.
+						if amount < 0 and not self.hasConstructionOverlap(layer):
 							try:
 								layer.correctPathDirection()
 								layer.removeOverlap()
