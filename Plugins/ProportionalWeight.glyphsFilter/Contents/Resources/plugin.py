@@ -67,6 +67,109 @@ class ProportionalWeightPad(NSView):
 		self.handleEvent_(event)
 
 
+class PWKnob(NSView):
+	"""TX-6 style rotary knob. Drag up/down to turn, Option-drag for fine
+	control, double-click to reset. Accent arc lights when off neutral.
+	Exposes doubleValue/setDoubleValue_/minValue/maxValue like NSSlider."""
+
+	def acceptsFirstMouse_(self, event):
+		return True
+
+	def mouseDownCanMoveWindow(self):
+		return False
+
+	@objc.python_method
+	def setup(self, minV, maxV, neutral, owner):
+		self.minV = float(minV)
+		self.maxV = float(maxV)
+		self.neutral = float(neutral)
+		self.val = float(neutral)
+		self.owner = owner
+
+	def doubleValue(self):
+		return self.val
+
+	def setDoubleValue_(self, v):
+		self.val = max(self.minV, min(self.maxV, float(v)))
+		self.setNeedsDisplay_(True)
+
+	def minValue(self):
+		return self.minV
+
+	def maxValue(self):
+		return self.maxV
+
+	@objc.python_method
+	def _angle(self, v):
+		# degrees clockwise from 12 o'clock, sweep -135..+135
+		frac = (v - self.minV) / (self.maxV - self.minV)
+		return -135.0 + 270.0 * frac
+
+	def drawRect_(self, rect):
+		b = self.bounds()
+		size = min(b.size.width, b.size.height)
+		cx, cy = b.size.width / 2.0, b.size.height / 2.0
+		r = size / 2.0 - 4
+
+		NSColor.controlColor().set()
+		NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - r, cy - r, 2 * r, 2 * r)).fill()
+		NSColor.separatorColor().set()
+		ring = NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - r, cy - r, 2 * r, 2 * r))
+		ring.setLineWidth_(1)
+		ring.stroke()
+
+		aN = self._angle(self.neutral)
+		aV = self._angle(self.val)
+
+		# neutral tick just outside the ring
+		tickRad = math.radians(90 - aN)
+		NSColor.tertiaryLabelColor().set()
+		tick = NSBezierPath.bezierPath()
+		tick.moveToPoint_((cx + math.cos(tickRad) * (r + 1), cy + math.sin(tickRad) * (r + 1)))
+		tick.lineToPoint_((cx + math.cos(tickRad) * (r + 4), cy + math.sin(tickRad) * (r + 4)))
+		tick.setLineWidth_(1.5)
+		tick.stroke()
+
+		offNeutral = abs(self.val - self.neutral) > (self.maxV - self.minV) * 0.002
+		if offNeutral:
+			# accent arc from neutral to value
+			NSColor.systemOrangeColor().set()
+			arc = NSBezierPath.bezierPath()
+			arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise_(
+				(cx, cy), r + 2.5, 90 - aN, 90 - aV, aV > aN)
+			arc.setLineWidth_(2.5)
+			arc.stroke()
+
+		# indicator line
+		(NSColor.systemOrangeColor() if offNeutral else NSColor.labelColor()).set()
+		rad = math.radians(90 - aV)
+		ind = NSBezierPath.bezierPath()
+		ind.moveToPoint_((cx + math.cos(rad) * r * 0.35, cy + math.sin(rad) * r * 0.35))
+		ind.lineToPoint_((cx + math.cos(rad) * r * 0.85, cy + math.sin(rad) * r * 0.85))
+		ind.setLineWidth_(2.5)
+		ind.setLineCapStyle_(1)  # round
+		ind.stroke()
+
+	def mouseDown_(self, event):
+		if event.clickCount() >= 2:
+			self.setDoubleValue_(self.neutral)
+			if getattr(self, 'owner', None) is not None:
+				self.owner.knobMoved()
+			return
+		self._dragY = event.locationInWindow().y
+		self._dragVal = self.val
+
+	def mouseDragged_(self, event):
+		dy = event.locationInWindow().y - getattr(self, '_dragY', event.locationInWindow().y)
+		rng = self.maxV - self.minV
+		scale = rng / 200.0
+		if event.modifierFlags() & (1 << 19):  # Option: fine control
+			scale /= 10.0
+		self.setDoubleValue_(getattr(self, '_dragVal', self.val) + dy * scale)
+		if getattr(self, 'owner', None) is not None:
+			self.owner.knobMoved()
+
+
 def _unit(dx, dy):
 	l = math.hypot(dx, dy)
 	if l < 1e-9:
@@ -150,127 +253,87 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 788))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 470, 452))
 
-		def label(text, y):
-			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 17))
+		def sectionTitle(text, y):
+			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 14))
 			f.setStringValue_(text)
 			f.setBezeled_(False)
 			f.setDrawsBackground_(False)
 			f.setEditable_(False)
 			f.setSelectable_(False)
-			f.setFont_(NSFont.systemFontOfSize_(11))
+			f.setTextColor_(NSColor.secondaryLabelColor())
+			f.setFont_(NSFont.systemFontOfSize_weight_(10, 0.3))
 			view.addSubview_(f)
 			return f
 
-		def valueField(y, initial):
-			f = NSTextField.alloc().initWithFrame_(NSMakeRect(216, y - 2, 52, 20))
+		def knobLabel(cx, y, text):
+			f = NSTextField.alloc().initWithFrame_(NSMakeRect(cx - 45, y, 90, 13))
+			f.setStringValue_(text)
+			f.setBezeled_(False)
+			f.setDrawsBackground_(False)
+			f.setEditable_(False)
+			f.setSelectable_(False)
+			f.setAlignment_(2)  # center
+			f.setFont_(NSFont.systemFontOfSize_(10))
+			view.addSubview_(f)
+			return f
+
+		def valueField(cx, y, initial):
+			f = NSTextField.alloc().initWithFrame_(NSMakeRect(cx - 28, y, 56, 19))
 			f.setStringValue_(initial)
 			f.setBezeled_(True)
 			f.setDrawsBackground_(True)
 			f.setEditable_(True)
 			f.setSelectable_(True)
-			f.setAlignment_(1)  # right-aligned on macOS
-			f.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(11, 0))
+			f.setAlignment_(2)  # center
+			f.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(10, 0))
 			f.setTarget_(self)
 			f.setAction_("fieldChanged:")
 			view.addSubview_(f)
 			return f
 
-		def rowReset(y, tag):
-			b = NSButton.alloc().initWithFrame_(NSMakeRect(192, y - 2, 20, 20))
-			b.setTitle_("↺")
-			b.setBordered_(False)
-			b.setTarget_(self)
-			b.setAction_("resetRow:")
-			b.setTag_(tag)
-			view.addSubview_(b)
-			return b
+		def knob(cx, y0, size, minV, maxV, neutral, labelText, initial):
+			k = PWKnob.alloc().initWithFrame_(NSMakeRect(cx - size / 2.0, y0, size, size))
+			k.setup(minV, maxV, neutral, self)
+			view.addSubview_(k)
+			knobLabel(cx, y0 - 15, labelText)
+			f = valueField(cx, y0 - 36, initial)
+			return k, f
 
-		def slider(y, minV, maxV, initial):
-			s = NSSlider.alloc().initWithFrame_(NSMakeRect(10, y, 258, 24))
-			s.setMinValue_(minV)
-			s.setMaxValue_(maxV)
-			s.setDoubleValue_(initial)
-			s.setContinuous_(True)
-			s.setTarget_(self)
-			s.setAction_("sliderCallback:")
-			view.addSubview_(s)
-			return s
-
-		# convention: "no change" sits at the center of every slider.
-		# Weight is units either side of 0; the % sliders run 0-200 with
-		# neutral 100 centered. Harmony/Balance are effect strengths, so
-		# their neutral (0 = off) is the left edge.
-		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(190, 756, 80, 26))
+		# Reset (drag knobs vertically; Option = fine; double-click = reset)
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(380, 418, 80, 26))
 		resetBtn.setTitle_("Reset")
-		resetBtn.setBezelStyle_(1)  # rounded
+		resetBtn.setBezelStyle_(1)
 		resetBtn.setTarget_(self)
 		resetBtn.setAction_("resetCallback:")
 		view.addSubview_(resetBtn)
 
-		label("Weight", 730)
-		self.valueField = valueField(730, "+0")
-		self.slider = slider(700, -200, 200, 0)
-		rowReset(730, 0)
+		# WEIGHT: big center knob, flanked by its modifiers
+		sectionTitle("WEIGHT", 430)
+		self.slider, self.valueField = knob(235, 336, 88, -200, 200, 0, "Weight", "+0")
+		self.vpctSlider, self.vpctField = knob(95, 356, 48, 0, 200, 100, "Vertical", "100%")
+		self.cpctSlider, self.cpctField = knob(375, 356, 48, 0, 200, 100, "Counters", "100%")
 
-		label("Vertical", 676)
-		self.vpctField = valueField(676, "100%")
-		self.vpctSlider = slider(646, 0, 200, 100)
-		rowReset(676, 1)
-
-		label("Counters", 622)
-		self.cpctField = valueField(622, "100%")
-		self.cpctSlider = slider(592, 0, 200, 100)
-		rowReset(622, 2)
-
-		label("Width", 568)
-		self.widthField = valueField(568, "100%")
-		self.widthSlider = slider(538, 0, 200, 100)
-		rowReset(568, 3)
-
-		label("Height", 514)
-		self.heightField = valueField(514, "100%")
-		self.heightSlider = slider(484, 0, 200, 100)
-		rowReset(514, 7)
-
-		label("Harmony", 460)
-		self.harmonyField = valueField(460, "0%")
-		self.harmonySlider = slider(430, 0, 100, 0)
-		rowReset(460, 4)
-
-		label("Balance", 406)
-		self.balanceField = valueField(406, "0%")
-		self.balanceSlider = slider(376, 0, 100, 0)
-		rowReset(406, 5)
-
-		label("Angle Snap", 352)
-		self.snapField = valueField(352, "0%")
-		self.snapSlider = slider(322, 0, 100, 0)
-		rowReset(352, 8)
-
-		label("Facets", 298)
-		self.facetField = valueField(298, "0%")
-		self.facetSlider = slider(268, 0, 100, 0)
-		rowReset(298, 9)
-
-		label("Circularize", 244)
-		self.circField = valueField(244, "0%")
-		self.circSlider = slider(214, 0, 100, 0)
-		rowReset(244, 10)
-
-		label("Tension", 190)
-		self.tensionField = valueField(190, "100%")
-		self.tensionSlider = slider(160, 50, 150, 100)
-		rowReset(190, 11)
-
-		label("Counter Position", 130)
-		self.padField = valueField(130, "0, 0")
-		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(10, 10, 116, 116))
+		# SHAPE: proportions + counter position pad
+		sectionTitle("SHAPE", 288)
+		self.widthSlider, self.widthField = knob(60, 216, 48, 0, 200, 100, "Width", "100%")
+		self.heightSlider, self.heightField = knob(150, 216, 48, 0, 200, 100, "Height", "100%")
+		self.tensionSlider, self.tensionField = knob(240, 216, 48, 50, 150, 100, "Tension", "100%")
+		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(330, 180, 84, 84))
 		self.pad.val = (0.0, 0.0)
 		self.pad.owner = self
 		view.addSubview_(self.pad)
-		rowReset(130, 6)
+		knobLabel(372, 165, "Counters XY")
+		self.padField = valueField(372, 144, "0, 0")
+
+		# PERFECT: cleanup + geometry knobs
+		sectionTitle("PERFECT", 120)
+		self.harmonySlider, self.harmonyField = knob(55, 52, 48, 0, 100, 0, "Harmony", "0%")
+		self.balanceSlider, self.balanceField = knob(145, 52, 48, 0, 100, 0, "Balance", "0%")
+		self.snapSlider, self.snapField = knob(235, 52, 48, 0, 100, 0, "Snap", "0%")
+		self.facetSlider, self.facetField = knob(325, 52, 48, 0, 100, 0, "Facets", "0%")
+		self.circSlider, self.circField = knob(415, 52, 48, 0, 100, 0, "Circular", "0%")
 
 		# row metadata for typed input and per-row reset, keyed by tag;
 		# the pad is tag 6, handled separately
@@ -312,6 +375,10 @@ class ProportionalWeight(FilterWithDialog):
 		self.pad.setNeedsDisplay_(True)
 		self.padField.setStringValue_("0, 0")
 		self.sliderCallback_(sender)
+
+	@objc.python_method
+	def knobMoved(self):
+		self.sliderCallback_(None)
 
 	@objc.python_method
 	def padChanged(self):
