@@ -300,7 +300,7 @@ class ProportionalWeight(FilterWithDialog):
 		# short underlines like the pedal; devil oversized, bleeding off the
 		# right edge of the panel
 		view.rules = [(12, 444, 168), (12, 272, 150), (12, 128, 335)]
-		view.devilRect = NSMakeRect(430, 90, 330, 330)
+		view.devilRect = NSMakeRect(375, 100, 340, 340)
 		devilPath = os.path.join(os.path.dirname(__file__), "devil.svg")
 		view.devil = NSImage.alloc().initWithContentsOfFile_(devilPath)
 
