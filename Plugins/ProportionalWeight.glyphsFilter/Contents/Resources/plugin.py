@@ -33,12 +33,19 @@ class PWPanel(NSView):
 		b = self.bounds()
 		CREAM.set()
 		NSBezierPath.fillRect_(b)
-		# title
-		title = NSString.stringWithString_("lil Devil")
-		attrs = {NSFontAttributeName: NSFont.systemFontOfSize_weight_(32, 0.56),
-			NSForegroundColorAttributeName: ORANGE}
-		size = title.sizeWithAttributes_(attrs)
-		title.drawAtPoint_withAttributes_(((b.size.width - size.width) / 2.0, b.size.height - 48), attrs)
+		# title: hand-drawn lettering
+		titleImg = getattr(self, 'titleImg', None)
+		if titleImg is not None:
+			tw, th = 210.0, 210.0 * 116.0 / 470.0
+			titleImg.drawInRect_fromRect_operation_fraction_(
+				NSMakeRect((b.size.width - tw) / 2.0, b.size.height - th - 14, tw, th),
+				((0, 0), (0, 0)), 2, 1.0)
+		else:
+			title = NSString.stringWithString_("lil Devil")
+			attrs = {NSFontAttributeName: NSFont.systemFontOfSize_weight_(32, 0.56),
+				NSForegroundColorAttributeName: ORANGE}
+			size = title.sizeWithAttributes_(attrs)
+			title.drawAtPoint_withAttributes_(((b.size.width - size.width) / 2.0, b.size.height - 48), attrs)
 		# status LED above Reset
 		ORANGE.set()
 		NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(541, 548, 9, 9)).fill()
@@ -303,6 +310,8 @@ class ProportionalWeight(FilterWithDialog):
 		view.devilRect = NSMakeRect(375, 100, 340, 340)
 		devilPath = os.path.join(os.path.dirname(__file__), "devil.svg")
 		view.devil = NSImage.alloc().initWithContentsOfFile_(devilPath)
+		titlePath = os.path.join(os.path.dirname(__file__), "title.svg")
+		view.titleImg = NSImage.alloc().initWithContentsOfFile_(titlePath)
 
 		def sectionTitle(text, y):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(12, y, 200, 14))
