@@ -49,9 +49,10 @@ class PWPanel(NSView):
 			p.stroke()
 		# mascot
 		devil = getattr(self, 'devil', None)
-		if devil is not None:
+		devilRect = getattr(self, 'devilRect', None)
+		if devil is not None and devilRect is not None:
 			devil.drawInRect_fromRect_operation_fraction_(
-				NSMakeRect(438, 150, 156, 156), ((0, 0), (0, 0)), 2, 1.0)
+				devilRect, ((0, 0), (0, 0)), 2, 1.0)
 
 
 class ProportionalWeightPad(NSView):
@@ -292,8 +293,9 @@ class ProportionalWeight(FilterWithDialog):
 		self.menuName = "Proportional Weight"
 		self.actionButtonLabel = "Apply"
 
-		view = PWPanel.alloc().initWithFrame_(NSMakeRect(0, 0, 600, 496))
-		view.rules = [(12, 424, 430), (12, 282, 430), (12, 114, 588)]
+		view = PWPanel.alloc().initWithFrame_(NSMakeRect(0, 0, 600, 560))
+		view.rules = [(12, 444, 430), (12, 272, 430), (12, 128, 430)]
+		view.devilRect = NSMakeRect(445, 290, 150, 150)
 		devilPath = os.path.join(os.path.dirname(__file__), "devil.svg")
 		view.devil = NSImage.alloc().initWithContentsOfFile_(devilPath)
 
@@ -316,8 +318,8 @@ class ProportionalWeight(FilterWithDialog):
 			f.setDrawsBackground_(False)
 			f.setEditable_(False)
 			f.setSelectable_(False)
-			f.setAlignment_(2)  # center
-			f.setTextColor_(INK)
+			f.setAlignment_(1)  # center
+			f.setTextColor_(INK.colorWithAlphaComponent_(0.75))
 			f.setFont_(NSFont.systemFontOfSize_weight_(9, 0.3))
 			view.addSubview_(f)
 			return f
@@ -326,60 +328,79 @@ class ProportionalWeight(FilterWithDialog):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(cx - 28, y, 56, 19))
 			f.setStringValue_(initial)
 			f.setBezeled_(False)
-			f.setBordered_(True)
-			f.setDrawsBackground_(True)
-			f.setBackgroundColor_(PAPER)
+			f.setBordered_(False)
+			f.setDrawsBackground_(False)
 			f.setTextColor_(INK)
 			f.setEditable_(True)
 			f.setSelectable_(True)
-			f.setAlignment_(2)  # center
-			f.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(10, 0))
+			f.setAlignment_(1)  # center
+			f.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(11, 0.23))
+			f.setFocusRingType_(1)  # none; cleaner while editing
 			f.setTarget_(self)
 			f.setAction_("fieldChanged:")
 			view.addSubview_(f)
 			return f
 
-		def knob(cx, y0, size, minV, maxV, neutral, labelText, initial):
+		def knobOnly(cx, y0, size, minV, maxV, neutral):
 			k = PWKnob.alloc().initWithFrame_(NSMakeRect(cx - size / 2.0, y0, size, size))
 			k.setup(minV, maxV, neutral, self)
 			view.addSubview_(k)
-			knobLabel(cx, y0 - 15, labelText)
-			f = valueField(cx, y0 - 36, initial)
-			return k, f
+			return k
 
 		# Reset (drag knobs vertically; Option = fine; double-click = reset)
-		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(506, 458, 80, 26))
+		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(506, 515, 80, 26))
 		resetBtn.setTitle_("Reset")
 		resetBtn.setBezelStyle_(1)
 		resetBtn.setTarget_(self)
 		resetBtn.setAction_("resetCallback:")
 		view.addSubview_(resetBtn)
 
-		# WEIGHT: big center knob, flanked by its modifiers
-		sectionTitle("WEIGHT", 428)
-		self.slider, self.valueField = knob(235, 334, 88, -200, 200, 0, "Weight", "+0")
-		self.vpctSlider, self.vpctField = knob(95, 354, 48, 0, 200, 100, "Vertical", "100%")
-		self.cpctSlider, self.cpctField = knob(375, 354, 48, 0, 200, 100, "Counters", "100%")
+		# WEIGHT: big center knob, flanked by its modifiers; one shared
+		# baseline for every label and value in the section
+		sectionTitle("WEIGHT", 448)
+		self.slider = knobOnly(235, 344, 92, -200, 200, 0)
+		self.vpctSlider = knobOnly(95, 366, 48, 0, 200, 100)
+		self.cpctSlider = knobOnly(375, 366, 48, 0, 200, 100)
+		knobLabel(235, 326, "Weight")
+		knobLabel(95, 326, "Vertical")
+		knobLabel(375, 326, "Counters")
+		self.valueField = valueField(235, 304, "+0")
+		self.vpctField = valueField(95, 304, "100%")
+		self.cpctField = valueField(375, 304, "100%")
 
-		# SHAPE: proportions + counter position pad
-		sectionTitle("SHAPE", 286)
-		self.widthSlider, self.widthField = knob(60, 214, 48, 0, 200, 100, "Width", "100%")
-		self.heightSlider, self.heightField = knob(150, 214, 48, 0, 200, 100, "Height", "100%")
-		self.tensionSlider, self.tensionField = knob(240, 214, 48, 50, 150, 100, "Tension", "100%")
-		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(330, 178, 84, 84))
+		# SHAPE: proportions; pad lives in the right column under the devil
+		sectionTitle("SHAPE", 276)
+		self.widthSlider = knobOnly(95, 200, 48, 0, 200, 100)
+		self.heightSlider = knobOnly(235, 200, 48, 0, 200, 100)
+		self.tensionSlider = knobOnly(375, 200, 48, 50, 150, 100)
+		knobLabel(95, 182, "Width")
+		knobLabel(235, 182, "Height")
+		knobLabel(375, 182, "Tension")
+		self.widthField = valueField(95, 160, "100%")
+		self.heightField = valueField(235, 160, "100%")
+		self.tensionField = valueField(375, 160, "100%")
+
+		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(470, 160, 100, 100))
 		self.pad.val = (0.0, 0.0)
 		self.pad.owner = self
 		view.addSubview_(self.pad)
-		knobLabel(372, 163, "Counters XY")
-		self.padField = valueField(372, 142, "0, 0")
+		knobLabel(520, 144, "Counters XY")
+		self.padField = valueField(520, 122, "0, 0")
 
 		# PERFECT: cleanup + geometry knobs
-		sectionTitle("PERFECT", 118)
-		self.harmonySlider, self.harmonyField = knob(60, 50, 48, 0, 100, 0, "Harmony", "0%")
-		self.balanceSlider, self.balanceField = knob(165, 50, 48, 0, 100, 0, "Balance", "0%")
-		self.snapSlider, self.snapField = knob(270, 50, 48, 0, 100, 0, "Snap", "0%")
-		self.facetSlider, self.facetField = knob(375, 50, 48, 0, 100, 0, "Facets", "0%")
-		self.circSlider, self.circField = knob(480, 50, 48, 0, 100, 0, "Circular", "0%")
+		sectionTitle("PERFECT", 132)
+		self.harmonySlider = knobOnly(60, 56, 48, 0, 100, 0)
+		self.balanceSlider = knobOnly(165, 56, 48, 0, 100, 0)
+		self.snapSlider = knobOnly(270, 56, 48, 0, 100, 0)
+		self.facetSlider = knobOnly(375, 56, 48, 0, 100, 0)
+		self.circSlider = knobOnly(480, 56, 48, 0, 100, 0)
+		for cx, txt in ((60, "Harmony"), (165, "Balance"), (270, "Snap"), (375, "Facets"), (480, "Circular")):
+			knobLabel(cx, 38, txt)
+		self.harmonyField = valueField(60, 16, "0%")
+		self.balanceField = valueField(165, 16, "0%")
+		self.snapField = valueField(270, 16, "0%")
+		self.facetField = valueField(375, 16, "0%")
+		self.circField = valueField(480, 16, "0%")
 
 		# row metadata for typed input and per-row reset, keyed by tag;
 		# the pad is tag 6, handled separately
