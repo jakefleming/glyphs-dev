@@ -4,22 +4,37 @@
 <dict>
 	<key>files</key>
 	<dict>
+		<key>Resources/devil.svg</key>
+		<data>
+		+LrbMQRuqPDRza26zQFqJ9qqruM=
+		</data>
 		<key>Resources/plugin.py</key>
 		<data>
-		HbQlBIJS7/wl6d+gnT0wog0yHcI=
+		aW5lMSCTqwWUM4HvansOsUM88Ew=
 		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
+		<key>Resources/devil.svg</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			+LrbMQRuqPDRza26zQFqJ9qqruM=
+			</data>
+			<key>hash2</key>
+			<data>
+			5zdfmFnW9yT3D56wrjuQKuYvsqBO3wSkI5BBdv3d4JU=
+			</data>
+		</dict>
 		<key>Resources/plugin.py</key>
 		<dict>
 			<key>hash</key>
 			<data>
-			HbQlBIJS7/wl6d+gnT0wog0yHcI=
+			aW5lMSCTqwWUM4HvansOsUM88Ew=
 			</data>
 			<key>hash2</key>
 			<data>
-			U4oUF6LKRV9mT0SMdOMIXJOtx1SARbrkvrZmZhj6VZM=
+			j03LBp8IOnvAbN2DkCakvqFWhKruItoTEOaFzJL36f0=
 			</data>
 		</dict>
 	</dict>
