@@ -384,15 +384,18 @@ class ProportionalWeight(FilterWithDialog):
 
 		# SHAPE: proportions + counter pad, all in one row like the pedal
 		sectionTitle("SHAPE", 276)
-		self.widthSlider = knobOnly(90, 200, 48, 0, 200, 100)
-		self.heightSlider = knobOnly(180, 200, 48, 0, 200, 100)
-		self.tensionSlider = knobOnly(270, 200, 48, 50, 150, 100)
-		knobLabel(90, 182, "Width")
-		knobLabel(180, 182, "Height")
-		knobLabel(270, 182, "Tension")
-		self.widthField = valueField(90, 160, "100%")
-		self.heightField = valueField(180, 160, "100%")
-		self.tensionField = valueField(270, 160, "100%")
+		self.widthSlider = knobOnly(75, 200, 48, 0, 200, 100)
+		self.heightSlider = knobOnly(150, 200, 48, 0, 200, 100)
+		self.tensionSlider = knobOnly(225, 200, 48, 50, 150, 100)
+		self.slantSlider = knobOnly(300, 200, 48, -30, 30, 0)
+		knobLabel(75, 182, "Width")
+		knobLabel(150, 182, "Height")
+		knobLabel(225, 182, "Tension")
+		knobLabel(300, 182, "Slant")
+		self.widthField = valueField(75, 160, "100%")
+		self.heightField = valueField(150, 160, "100%")
+		self.tensionField = valueField(225, 160, "100%")
+		self.slantField = valueField(300, 160, "+0°")
 
 		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(327, 176, 96, 96))
 		self.pad.val = (0.0, 0.0)
@@ -430,6 +433,7 @@ class ProportionalWeight(FilterWithDialog):
 			9: (self.facetSlider, self.facetField, 0),
 			10: (self.circSlider, self.circField, 0),
 			11: (self.tensionSlider, self.tensionField, 100),
+			12: (self.slantSlider, self.slantField, 0),
 		}
 
 		self.dialog = view
@@ -462,6 +466,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.facetSlider.setDoubleValue_(0)
 		self.circSlider.setDoubleValue_(0)
 		self.tensionSlider.setDoubleValue_(100)
+		self.slantSlider.setDoubleValue_(0)
 		self.pad.val = (0.0, 0.0)
 		self.pad.setNeedsDisplay_(True)
 		self.padField.setStringValue_("0, 0")
@@ -508,7 +513,7 @@ class ProportionalWeight(FilterWithDialog):
 		for sliderCtl, field, default in self._rowBySlider.values():
 			if sender is field:
 				try:
-					v = float(raw.replace("%", "").replace("+", "").strip())
+					v = float(raw.replace("%", "").replace("+", "").replace("°", "").strip())
 				except ValueError:
 					self.sliderCallback_(sender)  # restore display
 					return
@@ -529,6 +534,7 @@ class ProportionalWeight(FilterWithDialog):
 		self.facetField.setStringValue_("%d%%" % round(self.facetSlider.doubleValue()))
 		self.circField.setStringValue_("%d%%" % round(self.circSlider.doubleValue()))
 		self.tensionField.setStringValue_("%d%%" % round(self.tensionSlider.doubleValue()))
+		self.slantField.setStringValue_("%+d°" % round(self.slantSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -1011,6 +1017,54 @@ class ProportionalWeight(FilterWithDialog):
 				c1.position = NSMakePoint(Ap.x + (c1p.x - Ap.x) * factor, Ap.y + (c1p.y - Ap.y) * factor)
 				c2.position = NSMakePoint(Bp.x + (c2p.x - Bp.x) * factor, Bp.y + (c2p.y - Bp.y) * factor)
 
+	# ---------------- slant (optically corrected oblique) ----------------
+
+	@objc.python_method
+	def slantLayer(self, layer, thetaDeg):
+		"""Oblique with optical correction: shear about half x-height, then
+		restore vertical tangents at nodes that had them before the shear
+		(the RMX Slanter move), so bowls stay upright instead of leaning."""
+		if abs(thetaDeg) < 0.05:
+			return
+		tanT = math.tan(math.radians(thetaDeg))
+		try:
+			y0 = layer.associatedFontMaster().xHeight / 2.0
+		except Exception:
+			bnds = layer.bounds
+			y0 = bnds.origin.y + bnds.size.height / 2.0
+
+		for path in layer.shapes:
+			if not isinstance(path, GSPath):
+				continue
+			nodes = list(path.nodes)
+			cnt = len(nodes)
+			# nodes whose tangents are vertical before the shear
+			verticalAt = []
+			for i, n in enumerate(nodes):
+				if n.type == OFFCURVE or not n.smooth:
+					continue
+				prevN = nodes[(i - 1) % cnt]
+				nextN = nodes[(i + 1) % cnt]
+				if prevN.type != OFFCURVE or nextN.type != OFFCURVE:
+					continue
+				dxIn = abs(prevN.position.x - n.position.x)
+				dyIn = abs(prevN.position.y - n.position.y)
+				dxOut = abs(nextN.position.x - n.position.x)
+				dyOut = abs(nextN.position.y - n.position.y)
+				if dxIn <= 0.09 * dyIn and dxOut <= 0.09 * dyOut:  # within ~5 deg
+					verticalAt.append(i)
+			# shear
+			for n in nodes:
+				p = n.position
+				n.position = NSMakePoint(p.x + (p.y - y0) * tanT, p.y)
+			# re-verticalize the recorded tangents
+			for i in verticalAt:
+				n = nodes[i]
+				for j in ((i - 1) % cnt, (i + 1) % cnt):
+					h = nodes[j]
+					if h.type == OFFCURVE:
+						h.position = NSMakePoint(n.position.x, h.position.y)
+
 	# ---------------- harmony / balance ----------------
 
 	@objc.python_method
@@ -1127,6 +1181,10 @@ class ProportionalWeight(FilterWithDialog):
 				hpct = float(customParameters['height'])
 			else:
 				hpct = self.heightSlider.doubleValue()
+			if 'slant' in customParameters:
+				slantDeg = float(customParameters['slant'])
+			else:
+				slantDeg = self.slantSlider.doubleValue()
 			if 'anglesnap' in customParameters:
 				snapPct = float(customParameters['anglesnap'])
 			else:
@@ -1206,6 +1264,9 @@ class ProportionalWeight(FilterWithDialog):
 			if abs(h - 1.0) >= 0.0001:
 				layer.applyTransform((1, 0, 0, h, 0, 0))
 
+			# slant after the scales, before perfection/cleanup
+			self.slantLayer(layer, slantDeg)
+
 			# geometric perfection on the transformed outline
 			self.angleSnapLayer(layer, snapPct / 100.0)
 			self.facetEvenLayer(layer, facetPct / 100.0)
@@ -1224,7 +1285,7 @@ class ProportionalWeight(FilterWithDialog):
 	def generateCustomParameter(self):
 		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; height:%s; "
 			"harmony:%s; balance:%s; anglesnap:%s; facets:%s; circular:%s; "
-			"tension:%s; countershiftx:%s; countershifty:%s") % (
+			"tension:%s; slant:%s; countershiftx:%s; countershifty:%s") % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
@@ -1237,6 +1298,7 @@ class ProportionalWeight(FilterWithDialog):
 			round(self.facetSlider.doubleValue()),
 			round(self.circSlider.doubleValue()),
 			round(self.tensionSlider.doubleValue()),
+			round(self.slantSlider.doubleValue()),
 			round(self.pad.val[0] * PAD_RANGE),
 			round(self.pad.val[1] * PAD_RANGE))
 
