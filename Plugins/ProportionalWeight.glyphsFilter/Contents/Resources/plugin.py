@@ -4,12 +4,17 @@ from __future__ import division, print_function, unicode_literals
 import objc
 import math
 import os
+import json
 import traceback
 from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
 from AppKit import (NSView, NSSlider, NSTextField, NSMakeRect, NSFont, NSButton,
-	NSColor, NSBezierPath, NSImage, NSFontAttributeName, NSForegroundColorAttributeName)
+	NSColor, NSBezierPath, NSImage, NSFontAttributeName, NSForegroundColorAttributeName,
+	NSEvent)
 from Foundation import NSMakePoint, NSString
+
+PRESETS_KEY = "com.jakefleming.ProportionalWeight.presets"
+PANEL_W, PANEL_H = 600.0, 560.0
 
 MITER_LIMIT = 10  # max corner extension, in multiples of the offset amount
 WELD_EPS = 0.25  # endpoints closer than this are welded, not joined
@@ -27,7 +32,13 @@ ORANGE = _c(0.922, 0.314, 0.027)
 
 
 class PWPanel(NSView):
-	"""Flat cream panel: title, section rules, mascot."""
+	"""Flat cream panel: title, section rules, mascot. Scales its fixed
+	design to whatever frame the host window gives it (pedal-style resize:
+	scale, don't reflow)."""
+
+	def setFrameSize_(self, size):
+		objc.super(PWPanel, self).setFrameSize_(size)
+		self.setBoundsSize_((PANEL_W, PANEL_H))
 
 	def drawRect_(self, rect):
 		b = self.bounds()
@@ -361,6 +372,19 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(k)
 			return k
 
+		# presets: click loads, Option-click saves, orange = filled
+		self._presetBtns = []
+		for slot in range(5):
+			pb = NSButton.alloc().initWithFrame_(NSMakeRect(12 + slot * 30, 516, 26, 24))
+			pb.setTitle_(str(slot + 1))
+			pb.setBezelStyle_(1)
+			pb.setTag_(slot)
+			pb.setTarget_(self)
+			pb.setAction_("presetClicked:")
+			view.addSubview_(pb)
+			self._presetBtns.append(pb)
+		self._refreshPresetButtons()
+
 		# Reset (drag knobs vertically; Option = fine; double-click = reset)
 		resetBtn = NSButton.alloc().initWithFrame_(NSMakeRect(506, 515, 80, 26))
 		resetBtn.setTitle_("Reset")
@@ -436,6 +460,7 @@ class ProportionalWeight(FilterWithDialog):
 			12: (self.slantSlider, self.slantField, 0),
 		}
 
+		view.setAutoresizingMask_(18)  # width + height sizable
 		self.dialog = view
 		self._origWidths = {}
 
@@ -451,6 +476,8 @@ class ProportionalWeight(FilterWithDialog):
 				w.setBackgroundColor_(CREAM)
 				w.setTitlebarAppearsTransparent_(True)
 				w.setTitleVisibility_(1)  # hidden
+				w.setStyleMask_(w.styleMask() | 8)  # resizable
+				w.setContentMinSize_((470, 440))
 		except Exception:
 			pass
 
@@ -475,6 +502,77 @@ class ProportionalWeight(FilterWithDialog):
 	@objc.python_method
 	def knobMoved(self):
 		self.sliderCallback_(None)
+
+	# ---------------- presets ----------------
+
+	@objc.python_method
+	def _loadPresets(self):
+		try:
+			data = json.loads(Glyphs.defaults[PRESETS_KEY] or "[]")
+		except Exception:
+			data = []
+		while len(data) < 5:
+			data.append(None)
+		return data
+
+	@objc.python_method
+	def _stateDict(self):
+		return {
+			'amount': self.slider.doubleValue(),
+			'vertical': self.vpctSlider.doubleValue(),
+			'counters': self.cpctSlider.doubleValue(),
+			'width': self.widthSlider.doubleValue(),
+			'height': self.heightSlider.doubleValue(),
+			'tension': self.tensionSlider.doubleValue(),
+			'slant': self.slantSlider.doubleValue(),
+			'harmony': self.harmonySlider.doubleValue(),
+			'balance': self.balanceSlider.doubleValue(),
+			'anglesnap': self.snapSlider.doubleValue(),
+			'facets': self.facetSlider.doubleValue(),
+			'circular': self.circSlider.doubleValue(),
+			'padx': self.pad.val[0],
+			'pady': self.pad.val[1],
+		}
+
+	@objc.python_method
+	def _applyStateDict(self, d):
+		self.slider.setDoubleValue_(d.get('amount', 0))
+		self.vpctSlider.setDoubleValue_(d.get('vertical', 100))
+		self.cpctSlider.setDoubleValue_(d.get('counters', 100))
+		self.widthSlider.setDoubleValue_(d.get('width', 100))
+		self.heightSlider.setDoubleValue_(d.get('height', 100))
+		self.tensionSlider.setDoubleValue_(d.get('tension', 100))
+		self.slantSlider.setDoubleValue_(d.get('slant', 0))
+		self.harmonySlider.setDoubleValue_(d.get('harmony', 0))
+		self.balanceSlider.setDoubleValue_(d.get('balance', 0))
+		self.snapSlider.setDoubleValue_(d.get('anglesnap', 0))
+		self.facetSlider.setDoubleValue_(d.get('facets', 0))
+		self.circSlider.setDoubleValue_(d.get('circular', 0))
+		self.pad.val = (d.get('padx', 0.0), d.get('pady', 0.0))
+		self.pad.setNeedsDisplay_(True)
+		self.padChanged()
+		self.sliderCallback_(None)
+
+	@objc.python_method
+	def _refreshPresetButtons(self):
+		presets = self._loadPresets()
+		for pb in self._presetBtns:
+			filled = presets[pb.tag()] is not None
+			try:
+				pb.setContentTintColor_(ORANGE if filled else None)
+			except Exception:
+				pass
+
+	def presetClicked_(self, sender):
+		slot = sender.tag()
+		presets = self._loadPresets()
+		if NSEvent.modifierFlags() & (1 << 19):  # Option: save current
+			presets[slot] = self._stateDict()
+			Glyphs.defaults[PRESETS_KEY] = json.dumps(presets)
+			self._refreshPresetButtons()
+			return
+		if presets[slot] is not None:
+			self._applyStateDict(presets[slot])
 
 	@objc.python_method
 	def padChanged(self):
