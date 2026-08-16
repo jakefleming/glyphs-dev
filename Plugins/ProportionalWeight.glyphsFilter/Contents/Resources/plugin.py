@@ -848,6 +848,46 @@ class ProportionalWeight(FilterWithDialog):
 				return (t[1], -t[0])
 			return (-t[1], t[0])
 
+		# ---- physical guard: a wall may never travel more than GAP_MAX of the
+		# white gap in front of it (measured to the opposite wall). Counters
+		# close to a slit instead of inverting; crotches never clog into loops.
+		GAP_MAX = 0.47
+		flatPieces = []
+		for _p in paths:
+			_n = list(_p.nodes)
+			_c = len(_n)
+			for _i, _nd in enumerate(_n):
+				if _nd.type == OFFCURVE:
+					continue
+				_h2, _h1, _p0 = _n[(_i - 1) % _c], _n[(_i - 2) % _c], _n[(_i - 3) % _c]
+				if _h1.type == OFFCURVE and _h2.type == OFFCURVE:
+					_C = ((_p0.position.x, _p0.position.y), (_h1.position.x, _h1.position.y),
+						(_h2.position.x, _h2.position.y), (_nd.position.x, _nd.position.y))
+					_pts = [_bezPt(_C, _k / 12.0) for _k in range(13)]
+				else:
+					_pv = _n[(_i - 1) % _c]
+					_pts = [(_pv.position.x, _pv.position.y), (_nd.position.x, _nd.position.y)]
+				for _a, _b in zip(_pts, _pts[1:]):
+					flatPieces.append((_a, _b))
+
+		def whiteGap(P, nW):
+			"""Distance from P along nW (into the white) to the next outline."""
+			best = None
+			for _a, _b in flatPieces:
+				ex, ey = _b[0] - _a[0], _b[1] - _a[1]
+				den = nW[0] * ey - nW[1] * ex
+				if abs(den) < 1e-12:
+					continue
+				qx, qy = _a[0] - P[0], _a[1] - P[1]
+				sd = (qx * ey - qy * ex) / den
+				u = (qx * nW[1] - qy * nW[0]) / den
+				if sd <= 0.75 or u < -1e-6 or u > 1 + 1e-6:
+					continue
+				if best is None or sd < best:
+					best = sd
+			return best
+
+		self._clampHit = False
 		newShapes = list(others)
 		for pi, (path, origArea) in enumerate(zip(paths, areas)):
 			isCounter = (origArea > 0) != ccwOuter
@@ -865,10 +905,10 @@ class ProportionalWeight(FilterWithDialog):
 				ang = math.atan2(t[1], t[0])
 				return 1.0 - pressure * (1.0 - abs(math.sin(ang - penRad)))
 
-			def disp(t):
+			def disp(t, cap=1.0):
 				n = normalOf(t)
 				pf = penFactor(t)
-				return (n[0] * ax * f * pf, n[1] * ay * f * pf)
+				return (n[0] * ax * f * pf * cap, n[1] * ay * f * pf * cap)
 
 			pstr = strengths[pi] if strengths is not None else None
 			if pstr is not None and (not pstr or max(pstr) <= 0.001):
@@ -882,6 +922,34 @@ class ProportionalWeight(FilterWithDialog):
 			if pstr is not None and len(pstr) != len(segs):
 				pstr = None  # alignment lost: fall back to full strength
 
+			# cap each segment by the white in front of it (bolding only)
+			bolding = (ax > 0) or (ay > 0)
+			for seg in segs:
+				seg['cap'] = 1.0
+			if bolding:
+				for seg in segs:
+					if seg['c1'] is None:
+						M = ((seg['A'][0] + seg['B'][0]) / 2.0, (seg['A'][1] + seg['B'][1]) / 2.0)
+						tM = _unit(seg['B'][0] - seg['A'][0], seg['B'][1] - seg['A'][1])
+					else:
+						C = (seg['A'], seg['c1'], seg['c2'], seg['B'])
+						M = _bezPt(C, 0.5)
+						tM = _unit(C[3][0] - C[0][0] + C[2][0] - C[1][0], C[3][1] - C[0][1] + C[2][1] - C[1][1])
+					if tM is None:
+						continue
+					gap = whiteGap(M, normalOf(tM))
+					if gap is None:
+						continue
+					dv = disp(tM)
+					mag = math.hypot(dv[0], dv[1])
+					if mag > GAP_MAX * gap and mag > 1e-9:
+						seg['cap'] = GAP_MAX * gap / mag
+						self._clampHit = True
+			nsg = len(segs)
+			for k, seg in enumerate(segs):
+				seg['capA'] = min(seg['cap'], segs[k - 1]['cap'])
+				seg['capB'] = min(seg['cap'], segs[(k + 1) % nsg]['cap'])
+
 			# offset each segment independently
 			for k, seg in enumerate(segs):
 				sA = pstr[k] if pstr is not None else 1.0
@@ -891,7 +959,7 @@ class ProportionalWeight(FilterWithDialog):
 					seg['oA'], seg['oB'] = seg['A'], seg['B']
 					seg['t0'], seg['t1'] = (1, 0), (1, 0)
 					continue
-				d0, d1 = disp(t0), disp(t1)
+				d0, d1 = disp(t0, seg['capA']), disp(t1, seg['capB'])
 				d0 = (d0[0] * sA, d0[1] * sA)
 				d1 = (d1[0] * sB, d1[1] * sB)
 				seg['t0'], seg['t1'] = t0, t1
@@ -910,9 +978,10 @@ class ProportionalWeight(FilterWithDialog):
 					eT[1] = eT[1] or eT[0]
 					eT[2] = eT[2] or eT[1]
 					eS = (sA, (sA + sB) / 2.0, sB)
+					eC = (seg['capA'], (seg['capA'] + seg['capB']) / 2.0, seg['capB'])
 					offE = []
 					for j in range(3):
-						dj = disp(eT[j])
+						dj = disp(eT[j], eC[j])
 						dj = (dj[0] * eS[j], dj[1] * eS[j])
 						offE.append(((pts[j][0] + dj[0], pts[j][1] + dj[1]),
 							(pts[j + 1][0] + dj[0], pts[j + 1][1] + dj[1]), eT[j]))
@@ -1060,6 +1129,31 @@ class ProportionalWeight(FilterWithDialog):
 		return True
 
 	# ---------------- construction detection ----------------
+
+	@objc.python_method
+	def hasInvertedPath(self, layer):
+		"""True if a contour has folded inside out (its enclosed area collapsed
+		or flipped sign) — the signature of an offset bigger than the local
+		white. Tiny crossings at joins are normal and do NOT trigger this."""
+		for path in layer.shapes:
+			if not isinstance(path, GSPath) or not path.closed:
+				continue
+			pts = [(n.position.x, n.position.y) for n in path.nodes if n.type != OFFCURVE]
+			if len(pts) < 3:
+				continue
+			a = 0.0
+			per = 0.0
+			for i in range(len(pts)):
+				x1, y1 = pts[i]
+				x2, y2 = pts[(i + 1) % len(pts)]
+				a += x1 * y2 - x2 * y1
+				per += math.hypot(x2 - x1, y2 - y1)
+			a = abs(a) / 2.0
+			# a healthy contour encloses area comparable to its perimeter;
+			# a folded one collapses to a sliver
+			if per > 1e-6 and a < 0.02 * per * per / (4 * math.pi):
+				return True
+		return False
 
 	@objc.python_method
 	def hasConstructionOverlap(self, layer):
@@ -1567,7 +1661,13 @@ class ProportionalWeight(FilterWithDialog):
 						# non-adjacent edges cross and spike. Skipped when the
 						# glyph is built from overlapping construction paths,
 						# so the filter never merges deliberate structure.
-						if amount < 0 and not self.hasConstructionOverlap(layer):
+						# Boolean cleanup. Thinning always needs it (non-adjacent
+						# edges cross and spike). Bolding only gets it when the
+						# offset actually produced a self-intersection — extreme
+						# weight, pressure or vertical settings folding a counter
+						# or a crotch — so normal use keeps its node structure.
+						needsClean = amount < 0 or getattr(self, '_clampHit', False) or self.hasInvertedPath(layer)
+						if needsClean and not self.hasConstructionOverlap(layer):
 							try:
 								layer.correctPathDirection()
 								layer.removeOverlap()
