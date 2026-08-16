@@ -38,6 +38,8 @@ AXIS_TOL = 0.035  # |sin| below this counts as an axis-aligned tangent (~2 deg)
 EXT_LIMIT = 4.0   # max extension in units of segment parameter
 WIDTH_CAP = 1.5   # local half-width clamp (x median) for the line corrections
 EXTREME_TOL = 2.0 # keep-extremes: max outline deviation allowed when re-placing a node
+EXTREME_SLIDE = 0.45  # keep-extremes: max slide, as a fraction of the host segment's chord
+CORNER_FAR = 1.5      # corner farther than this x chord = near-parallel tangents: no correction
 
 
 # ---------------------------------------------------------------- geometry
@@ -607,6 +609,13 @@ class MakeItalic(FilterWithDialog):
 						noCorner()  # tangents diverge: inflection / degenerate
 						continue
 					mid = ((E[0][0] + E[3][0]) / 2.0, (E[0][1] + E[3][1]) / 2.0)
+					# nearly-parallel end tangents: the corner runs off to infinity
+					# and is useless as a pivot (a b's long stem-curve, a straight
+					# side drawn as one shallow arc). Treat it as straight.
+					chordE = math.hypot(E[3][0] - E[0][0], E[3][1] - E[0][1])
+					if math.hypot(corner[0] - mid[0], corner[1] - mid[1]) > CORNER_FAR * chordE:
+						noCorner()
+						continue
 					dx, dy = corner[0] - mid[0], corner[1] - mid[1]
 					if abs(dx) < 1e-6 or abs(dy) < 1e-6:
 						noCorner()
@@ -626,6 +635,7 @@ class MakeItalic(FilterWithDialog):
 						dN = abs(proj)
 						dH = abs((Cleg[0] - H[0]) * tN[0] + (Cleg[1] - H[1]) * tN[1])
 						fp, fd = farTangentLine(otherSeg, atStart)
+						capped = False
 						if fd is not None:
 							far = _rayInt(N, tN, fp, fd)
 							if far is not None:
@@ -633,8 +643,19 @@ class MakeItalic(FilterWithDialog):
 								dF = abs((F[0] - N[0]) * tN[0] + (F[1] - N[1]) * tN[1])
 								dN = min(dN, dF)
 								dH = min(dH, abs((F[0] - H[0]) * tN[0] + (F[1] - H[1]) * tN[1]))
+								capped = True
+						if not capped and otherSeg['c1'] is not None:
+							# The neighbouring ARC runs parallel to this tangent (a
+							# u's straight left side) so it yields no cap and the
+							# node would slide to a far-away corner. Bound it by
+							# that arc's own half extent. Line neighbours are left
+							# to the clip step, which re-intersects with the stem.
+							oA, oB = otherSeg['A'], otherSeg['B']
+							chordOther = math.hypot(oB[0] - oA[0], oB[1] - oA[1])
+							if chordOther > 1e-6:
+								dN = min(dN, 0.5 * chordOther)
+								dH = min(dH, 0.5 * chordOther)
 						sign = -s * toward   # shrink (s=-1) -> toward the corner
-						# sanity: never slide farther than twice the segment's chord
 						chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
 						dN = min(dN, 2.0 * chordAB)
 						dH = min(dH, 2.0 * chordAB)
@@ -795,6 +816,15 @@ class MakeItalic(FilterWithDialog):
 		_, seg, r = best
 		if (seg == 0 and r > 1 - 1e-4) or (seg == 1 and r < 1e-4):
 			return  # already at the extreme
+		# Distance limit: on a nearly straight run (a u's left side, a b's stem)
+		# the outline hardly changes however far the node slides, so the
+		# deviation test alone would allow it to travel most of the letter.
+		Ptarget = _bez(C1 if seg == 0 else C2, r)
+		slide = math.hypot(Ptarget[0] - P(n)[0], Ptarget[1] - P(n)[1])
+		host = C1 if seg == 0 else C2
+		hostChord = math.hypot(host[3][0] - host[0][0], host[3][1] - host[0][1])
+		if slide > EXTREME_SLIDE * hostChord:
+			return
 		# samples along the two original cubics for the refit
 		def samples(C, t0, t1, k=24):
 			return [_bez(C, t0 + (t1 - t0) * j / float(k)) for j in range(k + 1)]
