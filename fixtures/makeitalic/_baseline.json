@@ -1,0 +1,116 @@
+{
+ "goiters_OE": {
+  "sanity": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "italify_dist": [
+   0.9441944146112443,
+   2.2421074551258537,
+   20.797734507619225
+  ]
+ },
+ "goiters_Q": {
+  "sanity": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "italify_dist": [
+   15.148901377919987,
+   39.649222535110454,
+   126.6905370214717
+  ]
+ },
+ "goiters_Thorn": {
+  "sanity": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "italify_dist": [
+   17.841892848335565,
+   61.82399565491027,
+   187.7354944978223
+  ]
+ },
+ "goiters_e": {
+  "sanity": {
+   "kinks": 1,
+   "crossings": 1,
+   "flips": 2
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "italify_dist": [
+   1.3243261461441378,
+   3.1452961602657754,
+   22.037690506465296
+  ]
+ },
+ "goiters_m": {
+  "sanity": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 2
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 3
+  },
+  "italify_dist": [
+   0.8884879112289336,
+   3.1151176318460747,
+   7.291079104993331
+  ]
+ },
+ "goiters_v": {
+  "sanity": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 0
+  }
+ },
+ "vch_a": {
+  "sanity": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 1
+  },
+  "sanity_upright": {
+   "kinks": 0,
+   "crossings": 0,
+   "flips": 1
+  },
+  "italify_dist": [
+   1.5422651375226448,
+   3.496918462192827,
+   15.533842018399977
+  ]
+ }
+}
