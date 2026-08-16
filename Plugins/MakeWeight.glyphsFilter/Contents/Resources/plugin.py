@@ -65,6 +65,55 @@ def _lineInt(P, d1, Q, d2):
 	return r[0] if r else None
 
 
+def _lerpPt(a, b, t):
+	return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+
+def _bezSplit(C, t):
+	p01 = _lerpPt(C[0], C[1], t)
+	p12 = _lerpPt(C[1], C[2], t)
+	p23 = _lerpPt(C[2], C[3], t)
+	p012 = _lerpPt(p01, p12, t)
+	p123 = _lerpPt(p12, p23, t)
+	pm = _lerpPt(p012, p123, t)
+	return (C[0], p01, p012, pm), (pm, p123, p23, C[3])
+
+
+def _segSegX(a, b, c, d):
+	r = (b[0] - a[0], b[1] - a[1])
+	sv = (d[0] - c[0], d[1] - c[1])
+	den = r[0] * sv[1] - r[1] * sv[0]
+	if abs(den) < 1e-12:
+		return None
+	q = (c[0] - a[0], c[1] - a[1])
+	u = (q[0] * sv[1] - q[1] * sv[0]) / den
+	v = (q[0] * r[1] - q[1] * r[0]) / den
+	if -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001:
+		return u, v, (a[0] + u * r[0], a[1] + u * r[1])
+	return None
+
+
+def _crossElems(Apts, Bpts):
+	"""First crossing between two polylines, preferring near A's end and
+	B's start; skips the shared endpoint itself. Returns (tA, tB, X)."""
+	best = None
+	na, nb = len(Apts) - 1, len(Bpts) - 1
+	for i in range(na):
+		for j in range(nb):
+			r = _segSegX(Apts[i], Apts[i + 1], Bpts[j], Bpts[j + 1])
+			if r is None:
+				continue
+			u, v, X = r
+			tA = (i + u) / na
+			tB = (j + v) / nb
+			if tA > 0.999 and tB < 0.001:
+				continue
+			score = (1 - tA) + tB
+			if best is None or score < best[0]:
+				best = (score, tA, tB, X)
+	return None if best is None else (best[1], best[2], best[3])
+
+
 class MakeWeight(FilterWithDialog):
 
 	# ------------------------------------------------------------ UI
@@ -340,28 +389,172 @@ class MakeWeight(FilterWithDialog):
 						lb = math.hypot(seg['c2'][0] - seg['B'][0], seg['c2'][1] - seg['B'][1])
 						seg['ratio'] = (la / hit[1], lb / hit[2])
 
-			# ---- junctions: weld smooth, clip curve/line, miter corners
+			# ---- collapsed segments: an arc offset past its own radius folds into
+			# a cusp. Detect (chord reverses / offset shorter than a few units) and
+			# collapse it: trim the neighbours to their crossing, park this segment
+			# there as a zero-length element (node count preserved).
 			nseg = len(segs)
+			for seg in segs:
+				ox, oy = seg['oB'][0] - seg['oA'][0], seg['oB'][1] - seg['oA'][1]
+				cx, cy = seg['B'][0] - seg['A'][0], seg['B'][1] - seg['A'][1]
+				seg['collapsed'] = (ox * cx + oy * cy) < 0
+			def elemPts(sg):
+				if sg['c1'] is not None:
+					E = (sg['oA'], sg['oc1'], sg['oc2'], sg['oB'])
+					return E, [_bez(E, k / 24.0) for k in range(25)]
+				E = (sg['oA'], sg['oB'])
+				return E, list(E)
+			i = 0
+			handled = set()
+			while i < nseg:
+				if not segs[i]['collapsed'] or i in handled:
+					i += 1
+					continue
+				# extent of the collapsed run
+				j = i
+				run = [i]
+				while segs[(j + 1) % nseg]['collapsed'] and len(run) < nseg - 2:
+					j = (j + 1) % nseg
+					run.append(j)
+				pv, nx = segs[(i - 1) % nseg], segs[(j + 1) % nseg]
+				pE, pPts = elemPts(pv)
+				nE, nPts = elemPts(nx)
+				x = _crossElems(pPts, nPts)
+				if x is not None:
+					tA, tB, X = x
+					if len(pE) == 4:
+						left, _ = _bezSplit(pE, tA)
+						pv['oc1'], pv['oc2'] = left[1], left[2]
+						J1 = left[3]
+					else:
+						J1 = X
+					if len(nE) == 4:
+						_, right = _bezSplit(nE, tB)
+						nx['oc1'], nx['oc2'] = right[1], right[2]
+						J2 = right[0]
+					else:
+						J2 = X
+					J = ((J1[0] + J2[0]) / 2.0, (J1[1] + J2[1]) / 2.0)
+				else:
+					# no crossing: park at the midpoint between the neighbours' ends
+					J = ((pv['oB'][0] + nx['oA'][0]) / 2.0, (pv['oB'][1] + nx['oA'][1]) / 2.0)
+				pv['oB'] = J
+				nx['oA'] = J
+				pv['trimmed'] = nx['trimmed'] = True
+				for r in run:
+					sg = segs[r]
+					sg['oA'] = sg['oB'] = J
+					if sg['c1'] is not None:
+						sg['oc1'] = sg['oc2'] = J
+					sg['trimmed'] = True
+					handled.add(r)
+				i = j + 1
+
+			# ---- junctions: weld smooth, clip curve/line, miter corners
 			for i in range(nseg):
+				if segs[i]['collapsed'] or segs[i - 1]['collapsed']:
+					continue  # already resolved by the collapse
 				prev, cur = segs[i - 1], segs[i]
 				E1, E2 = prev['oB'], cur['oA']
 				P = cur['A']
 				gap = math.hypot(E1[0] - E2[0], E1[1] - E2[1])
-				if cur['smoothA'] or gap < WELD_EPS:
+				if gap < WELD_EPS:
 					Wp = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
 					prev['oB'] = cur['oA'] = Wp
 					continue
-				hit = _rayInt(E1, prev['t1'], E2, cur['t0'])
-				if hit is not None and math.hypot(hit[0][0] - P[0], hit[0][1] - P[1]) <= MITER_LIMIT * max(abs(prev['amt']), abs(cur['amt'])) + 2:
-					prev['oB'] = cur['oA'] = hit[0]
+				bothLines = prev['c1'] is None and cur['c1'] is None
+				lim = MITER_LIMIT * max(abs(prev['amt']), abs(cur['amt'])) + 2
+				hit = _rayInt(E1, prev['t1'], E2, cur['t0']) if not cur['smoothA'] else None
+				if hit is not None and math.hypot(hit[0][0] - P[0], hit[0][1] - P[1]) <= lim:
+					M, ta, tb = hit
+					if bothLines or (ta >= -0.01 and tb <= 0.01):
+						# convex corner (gap opens): plain miter
+						prev['oB'] = cur['oA'] = M
+						continue
+				# concave corner / crotch: the offset elements overlap. Find where
+				# they actually cross and trim both back to it (no loop, no blob).
+				pElem = ((prev['oA'], prev['oc1'], prev['oc2'], prev['oB']) if prev['c1'] is not None else (prev['oA'], prev['oB']))
+				cElem = ((cur['oA'], cur['oc1'], cur['oc2'], cur['oB']) if cur['c1'] is not None else (cur['oA'], cur['oB']))
+				pPts = [_bez(pElem, k / 24.0) for k in range(25)] if len(pElem) == 4 else list(pElem)
+				cPts = [_bez(cElem, k / 24.0) for k in range(25)] if len(cElem) == 4 else list(cElem)
+				x = _crossElems(pPts, cPts)
+				if x is not None:
+					tA, tB, X = x
+					if len(pElem) == 4:
+						left, _ = _bezSplit(pElem, tA)
+						prev['oc1'], prev['oc2'] = left[1], left[2]
+						pEnd = left[3]
+					else:
+						pEnd = X
+					if len(cElem) == 4:
+						_, right = _bezSplit(cElem, tB)
+						cur['oc1'], cur['oc2'] = right[1], right[2]
+						cStart = right[0]
+					else:
+						cStart = X
+					J = ((pEnd[0] + cStart[0]) / 2.0, (pEnd[1] + cStart[1]) / 2.0)
+					prev['oB'] = cur['oA'] = J
+					prev['trimmed'] = cur['trimmed'] = True
 					continue
-				# miter too long: keep the join at the average (bevel would add nodes)
-				Wp = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
-				prev['oB'] = cur['oA'] = Wp
+				# no crossing found: smooth joins weld; corners miter if sane, else weld
+				if not cur['smoothA'] and hit is not None and math.hypot(hit[0][0] - P[0], hit[0][1] - P[1]) <= lim:
+					prev['oB'] = cur['oA'] = hit[0]
+				else:
+					Wp = ((E1[0] + E2[0]) / 2.0, (E1[1] + E2[1]) / 2.0)
+					prev['oB'] = cur['oA'] = Wp
+
+			# ---- closing notches: after junctions are resolved, walls of a narrow
+			# notch (crotch, eye corner) can have crossed. Find crossings between
+			# a segment and one 2-4 segments ahead; trim both to the crossing and
+			# collapse everything between to that point (node count preserved).
+			def elemOf(sg):
+				if sg['c1'] is not None:
+					E = (sg['oA'], sg['oc1'], sg['oc2'], sg['oB'])
+					return E, [_bez(E, k / 24.0) for k in range(25)]
+				E = (sg['oA'], sg['oB'])
+				return E, list(E)
+			for _pass in range(3 if nseg >= 4 else 0):
+				changed = False
+				for i in range(nseg):
+					if segs[i].get('collapsed'):
+						continue
+					for d in (2, 3, 4, 5, 6):
+						if d >= nseg - 1:
+							break
+						k = (i + d) % nseg
+						if segs[k].get('collapsed'):
+							continue
+						E1, P1 = elemOf(segs[i])
+						E2, P2 = elemOf(segs[k])
+						x = _crossElems(P1, P2)
+						if x is None:
+							continue
+						tA, tB, X = x
+						# only accept crossings that actually close the notch: the
+						# in-between run must be short compared to the neighbours
+						between = [segs[(i + m) % nseg] for m in range(1, d)]
+						if len(E1) == 4:
+							left, _ = _bezSplit(E1, tA)
+							segs[i]['oc1'], segs[i]['oc2'] = left[1], left[2]
+						if len(E2) == 4:
+							_, right = _bezSplit(E2, tB)
+							segs[k]['oc1'], segs[k]['oc2'] = right[1], right[2]
+						segs[i]['oB'] = X
+						segs[k]['oA'] = X
+						segs[i]['trimmed'] = segs[k]['trimmed'] = True
+						for b in between:
+							b['oA'] = b['oB'] = X
+							if b['c1'] is not None:
+								b['oc1'] = b['oc2'] = X
+							b['trimmed'] = b['collapsed'] = True
+						changed = True
+						break
+				if not changed:
+					break
 
 			# ---- rounds: restore the original tension ratio on the new legs
 			for seg in segs:
-				if seg['c1'] is None or not seg.get('ratio'):
+				if seg['c1'] is None or not seg.get('ratio') or seg.get('trimmed'):
 					continue
 				A2, B2 = seg['oA'], seg['oB']
 				t0, t1 = seg['t0'], seg['t1']
