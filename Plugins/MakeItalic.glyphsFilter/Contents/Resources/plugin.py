@@ -38,8 +38,6 @@ AXIS_TOL = 0.035  # |sin| below this counts as an axis-aligned tangent (~2 deg)
 EXT_LIMIT = 4.0   # max extension in units of segment parameter
 WIDTH_CAP = 1.5   # local half-width clamp (x median) for the line corrections
 EXTREME_TOL = 2.0 # keep-extremes: max outline deviation allowed when re-placing a node
-EXTREME_SLIDE = 0.45  # keep-extremes: max slide, as a fraction of the host segment's chord
-CORNER_FAR = 1.5      # corner farther than this x chord = near-parallel tangents: no correction
 
 
 # ---------------------------------------------------------------- geometry
@@ -148,73 +146,22 @@ def _extremeParams(C):
 	return out
 
 
-def _inflections(C):
-	"""Parameters where the cubic's curvature is zero: cross(D, D') = 0."""
-	# D(t) = 3[(1-t)^2 a + 2(1-t)t b + t^2 c], with a=P1-P0, b=P2-P1, c=P3-P2
-	ax, ay = C[1][0] - C[0][0], C[1][1] - C[0][1]
-	bx, by = C[2][0] - C[1][0], C[2][1] - C[1][1]
-	cx, cy = C[3][0] - C[2][0], C[3][1] - C[2][1]
-	# cross(D, D') is quadratic in t: k0 + k1 t + k2 t^2 (up to a constant)
-	# D = a + 2t(b-a) + t^2(a-2b+c);  D' = 2(b-a) + 2t(a-2b+c)
-	ux, uy = bx - ax, by - ay
-	vx, vy = ax - 2 * bx + cx, ay - 2 * by + cy
-	# D = a + 2t u + t^2 v ; D' = 2u + 2t v
-	# cross(D, D') = 2[cross(a,u) + t cross(a,v) + t^2 cross(u,v)]  (t^2 terms from cross(u,v) with 2t*t)
-	k0 = ax * uy - ay * ux
-	k1 = ax * vy - ay * vx
-	k2 = ux * vy - uy * vx
-	out = []
-	if abs(k2) < 1e-12:
-		if abs(k1) > 1e-12:
-			out.append(-k0 / k1)
-		return out
-	disc = k1 * k1 - 4 * k2 * k0
-	if disc < 0:
-		return out
-	r = math.sqrt(disc)
-	out.append((-k1 - r) / (2 * k2))
-	out.append((-k1 + r) / (2 * k2))
-	return out
-
-
-EXT_EXTERNAL_LIMIT = 1.0  # inflection ("external") extensions: at most one segment-length
-
-
-def _extend(C, bounds=None):
-	"""Extend a cubic beyond an end whose tangent is not axis-aligned:
-	to the implicit extreme (x'=0 or y'=0) if one exists within EXT_LIMIT,
-	otherwise to the inflection point (where the tangent stops approaching
-	the axis) within EXT_EXTERNAL_LIMIT -- the "external extension". Either
-	way the extended point must stay inside `bounds` (xmin, ymin, xmax, ymax)
-	when given. Returns (t0, t1), t0<=0<=1<=t1."""
+def _extend(C):
+	"""Extend a cubic to its implicit extremes: returns (t0, t1) with t0<=0,
+	t1>=1 such that the tangents at t0 and t1 are axis-aligned when such
+	extremes exist within EXT_LIMIT; otherwise the end stays where it is."""
 	t0, t1 = 0.0, 1.0
 	dA = _unit(*_bezD(C, 0.0))
 	dB = _unit(*_bezD(C, 1.0))
 	roots = _extremeParams(C)
-	infl = _inflections(C)
-
-	def inside(t):
-		if bounds is None:
-			return True
-		x, y = _bez(C, t)
-		return bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
-
 	if _axisKind(dA) is None:
-		cands = [r for r in roots if r < -1e-6 and r >= -EXT_LIMIT and inside(r)]
+		cands = [r for r in roots if r < -1e-6 and r >= -EXT_LIMIT]
 		if cands:
 			t0 = max(cands)
-		else:
-			cands = [r for r in infl if r < -1e-6 and r >= -EXT_EXTERNAL_LIMIT and inside(r)]
-			if cands:
-				t0 = max(cands)
 	if _axisKind(dB) is None:
-		cands = [r for r in roots if r > 1 + 1e-6 and r <= 1 + EXT_LIMIT and inside(r)]
+		cands = [r for r in roots if r > 1 + 1e-6 and r <= 1 + EXT_LIMIT]
 		if cands:
 			t1 = min(cands)
-		else:
-			cands = [r for r in infl if r > 1 + 1e-6 and r <= 1 + EXT_EXTERNAL_LIMIT and inside(r)]
-			if cands:
-				t1 = min(cands)
 	return t0, t1
 
 
@@ -529,14 +476,6 @@ class MakeItalic(FilterWithDialog):
 						verticalNodes.append((path, i))
 
 		# ================= 1. curve correction on the upright =================
-		# extension bounds: the glyph's box, grown by half its size each way
-		extBounds = None
-		allPts = [(n.position.x, n.position.y) for p in closed for n in p.nodes]
-		if allPts:
-			xs = [q[0] for q in allPts]
-			ys = [q[1] for q in allPts]
-			gw, gh = max(xs) - min(xs), max(ys) - min(ys)
-			extBounds = (min(xs) - 0.5 * gw, min(ys) - 0.5 * gh, max(xs) + 0.5 * gw, max(ys) + 0.5 * gh)
 		if curve > 0:
 			for path, segs in zip(closed, pathSegs):
 				if segs is None:
@@ -546,28 +485,12 @@ class MakeItalic(FilterWithDialog):
 				proposals = {}   # node index -> list of (dx, dy)
 				handleMove = {}  # offcurve index -> (dx, dy, nodeIndex, nodeOwnProposal)
 
-				# pre-compute each curve segment's extended arc, so neighbours can
-				# refer to the tangent at its implicit extreme (its corner leg)
-				extCache = {}
-				for si, seg in enumerate(segs):
-					if seg['c1'] is None:
-						continue
-					C = (seg['A'], seg['c1'], seg['c2'], seg['B'])
-					t0, t1 = _extend(C, extBounds)
-					E = _sub(C, t0, t1)
-					extCache[si] = (E, _unit(*_bezD(E, 0.0)), _unit(*_bezD(E, 1.0)))
-
 				def farTangentLine(other, atStart):
 					"""Tangent line (point, dir) at the far end of a neighbouring
-					segment -- for curves, at the far end of its EXTENDED arc, so
-					the cap lands on that arc's corner leg (Italify's leg end)."""
+					segment: its A end if atStart else its B end."""
 					if other['c1'] is None:
 						d = _unit(other['B'][0] - other['A'][0], other['B'][1] - other['A'][1])
 						return (other['A'] if atStart else other['B']), d
-					oi = segs.index(other)
-					if oi in extCache:
-						E_o, d0, d3 = extCache[oi]
-						return (E_o[0], d0) if atStart else (E_o[3], d3)
 					if atStart:
 						return other['A'], _unit(other['c1'][0] - other['A'][0], other['c1'][1] - other['A'][1])
 					return other['B'], _unit(other['B'][0] - other['c2'][0], other['B'][1] - other['c2'][1])
@@ -587,17 +510,11 @@ class MakeItalic(FilterWithDialog):
 						# makes no proposal; its neighbours decide the shared nodes
 						pass
 
-					t0, t1 = _extend(C, extBounds)
+					t0, t1 = _extend(C)
 					E = _sub(C, t0, t1)
 					dE0 = _unit(*_bezD(E, 0.0))
 					dE3 = _unit(*_bezD(E, 1.0))
 					if dE0 is None or dE3 is None:
-						noCorner()
-						continue
-					# Italify's rule: a segment is only "round" if at least one end
-					# sits on an axis extreme (real or reached by extension); a
-					# shallow curve with neither is left alone (v/w/x sides, terminals)
-					if _axisKind(dE0) is None and _axisKind(dE3) is None:
 						noCorner()
 						continue
 					hit = _rayInt(E[0], dE0, E[3], (-dE3[0], -dE3[1]))
@@ -609,13 +526,6 @@ class MakeItalic(FilterWithDialog):
 						noCorner()  # tangents diverge: inflection / degenerate
 						continue
 					mid = ((E[0][0] + E[3][0]) / 2.0, (E[0][1] + E[3][1]) / 2.0)
-					# nearly-parallel end tangents: the corner runs off to infinity
-					# and is useless as a pivot (a b's long stem-curve, a straight
-					# side drawn as one shallow arc). Treat it as straight.
-					chordE = math.hypot(E[3][0] - E[0][0], E[3][1] - E[0][1])
-					if math.hypot(corner[0] - mid[0], corner[1] - mid[1]) > CORNER_FAR * chordE:
-						noCorner()
-						continue
 					dx, dy = corner[0] - mid[0], corner[1] - mid[1]
 					if abs(dx) < 1e-6 or abs(dy) < 1e-6:
 						noCorner()
@@ -635,7 +545,6 @@ class MakeItalic(FilterWithDialog):
 						dN = abs(proj)
 						dH = abs((Cleg[0] - H[0]) * tN[0] + (Cleg[1] - H[1]) * tN[1])
 						fp, fd = farTangentLine(otherSeg, atStart)
-						capped = False
 						if fd is not None:
 							far = _rayInt(N, tN, fp, fd)
 							if far is not None:
@@ -643,58 +552,12 @@ class MakeItalic(FilterWithDialog):
 								dF = abs((F[0] - N[0]) * tN[0] + (F[1] - N[1]) * tN[1])
 								dN = min(dN, dF)
 								dH = min(dH, abs((F[0] - H[0]) * tN[0] + (F[1] - H[1]) * tN[1]))
-								capped = True
-						if not capped and otherSeg['c1'] is not None:
-							# The neighbouring ARC runs parallel to this tangent (a
-							# u's straight left side) so it yields no cap and the
-							# node would slide to a far-away corner. Bound it by
-							# that arc's own half extent. Line neighbours are left
-							# to the clip step, which re-intersects with the stem.
-							oA, oB = otherSeg['A'], otherSeg['B']
-							chordOther = math.hypot(oB[0] - oA[0], oB[1] - oA[1])
-							if chordOther > 1e-6:
-								dN = min(dN, 0.5 * chordOther)
-								dH = min(dH, 0.5 * chordOther)
 						sign = -s * toward   # shrink (s=-1) -> toward the corner
-						chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
-						dN = min(dN, 2.0 * chordAB)
-						dH = min(dH, 2.0 * chordAB)
 						return ((sign * strength * dN * tN[0], sign * strength * dN * tN[1]),
 							(sign * strength * dH * tN[0], sign * strength * dH * tN[1]))
 
 					mvA, mv1 = endMove(A, tA, c1, prev, True)
 					mvB, mv2 = endMove(B, tB, c2, nxt, False)
-
-					# corrected extended arc, for clipping against adjoining lines
-					f = 1.0 + s * strength
-					E2 = tuple((corner[0] + f * (P[0] - corner[0]), corner[1] + f * (P[1] - corner[1])) for P in E)
-					span = (t1 - t0) if abs(t1 - t0) > 1e-9 else 1.0
-					u0 = (0.0 - t0) / span
-					u1 = (1.0 - t0) / span
-
-					def clipEnd(lineSeg, atStart):
-						"""Italify's seg-clip: node = intersection of the corrected
-						extended arc with the neighbouring straight line; the
-						handles come from re-splitting the arc there."""
-						u = self._clipToLine(E2, u0 if atStart else u1, lineSeg['A'], lineSeg['B'])
-						if u is None:
-							return None
-						S = _sub(E2, u, u1) if atStart else _sub(E2, u0, u)
-						return S
-
-					chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
-					clipLimit = strength * 2.0 * chordAB + 2.0   # seg-clip-limit
-					if prev['c1'] is None:
-						S = clipEnd(prev, True)
-						if S is not None and math.hypot(S[0][0] - A[0], S[0][1] - A[1]) <= clipLimit:
-							mvA = (S[0][0] - A[0], S[0][1] - A[1])
-							mv1 = (S[1][0] - c1[0], S[1][1] - c1[1])
-					if nxt['c1'] is None:
-						S = clipEnd(nxt, False)
-						if S is not None and math.hypot(S[3][0] - B[0], S[3][1] - B[1]) <= clipLimit:
-							mvB = (S[3][0] - B[0], S[3][1] - B[1])
-							mv2 = (S[2][0] - c2[0], S[2][1] - c2[1])
-
 					proposals.setdefault(seg['iA'], []).append(mvA)
 					proposals.setdefault(seg['iB'], []).append(mvB)
 					handleMove[seg['i1']] = (mv1[0], mv1[1], seg['iA'], mvA)
@@ -816,15 +679,6 @@ class MakeItalic(FilterWithDialog):
 		_, seg, r = best
 		if (seg == 0 and r > 1 - 1e-4) or (seg == 1 and r < 1e-4):
 			return  # already at the extreme
-		# Distance limit: on a nearly straight run (a u's left side, a b's stem)
-		# the outline hardly changes however far the node slides, so the
-		# deviation test alone would allow it to travel most of the letter.
-		Ptarget = _bez(C1 if seg == 0 else C2, r)
-		slide = math.hypot(Ptarget[0] - P(n)[0], Ptarget[1] - P(n)[1])
-		host = C1 if seg == 0 else C2
-		hostChord = math.hypot(host[3][0] - host[0][0], host[3][1] - host[0][1])
-		if slide > EXTREME_SLIDE * hostChord:
-			return
 		# samples along the two original cubics for the refit
 		def samples(C, t0, t1, k=24):
 			return [_bez(C, t0 + (t1 - t0) * j / float(k)) for j in range(k + 1)]
@@ -885,31 +739,28 @@ class MakeItalic(FilterWithDialog):
 
 	@objc.python_method
 	def _clipToLine(self, E2, u, LA, LB):
-		"""Parameter on cubic E2 (searching around u, on the extrapolated
-		curve if needed) where it crosses the infinite line through LA-LB.
-		Returns None when there is no crossing nearby."""
+		"""Parameter on cubic E2 (near u) where it crosses the line LA-LB."""
 		d = _unit(LB[0] - LA[0], LB[1] - LA[1])
 		if d is None:
-			return None
+			return u
 		nx, ny = -d[1], d[0]
 
 		def sd(t):
 			P = _bez(E2, t)
 			return (P[0] - LA[0]) * nx + (P[1] - LA[1]) * ny
-		# expanding bracket search around u (up to +-1.5 in parameter)
-		for half in (0.15, 0.4, 0.8, 1.5):
-			lo, hi = u - half, u + half
-			flo, fhi = sd(lo), sd(hi)
-			if flo * fhi <= 0:
-				for _ in range(50):
-					mid = (lo + hi) / 2.0
-					fm = sd(mid)
-					if flo * fm <= 0:
-						hi, fhi = mid, fm
-					else:
-						lo, flo = mid, fm
-				return (lo + hi) / 2.0
-		return None
+		# bracket around u
+		lo, hi = u - 0.35, u + 0.35
+		flo, fhi = sd(lo), sd(hi)
+		if flo * fhi > 0:
+			return u
+		for _ in range(40):
+			mid = (lo + hi) / 2.0
+			fm = sd(mid)
+			if flo * fm <= 0:
+				hi, fhi = mid, fm
+			else:
+				lo, flo = mid, fm
+		return (lo + hi) / 2.0
 
 	# ------------------------------------------------------------ filter
 
