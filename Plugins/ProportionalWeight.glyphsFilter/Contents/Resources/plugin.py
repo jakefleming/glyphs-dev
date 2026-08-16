@@ -393,40 +393,61 @@ class ProportionalWeight(FilterWithDialog):
 		resetBtn.setAction_("resetCallback:")
 		view.addSubview_(resetBtn)
 
+		# Original: preview the untouched outline while the dialog is open,
+		# for before/after comparison. Apply still applies the settings.
+		self._showOriginal = False
+		origToggle = NSButton.alloc().initWithFrame_(NSMakeRect(408, 518, 92, 20))
+		origToggle.setButtonType_(3)  # switch/checkbox
+		origToggle.setTitle_("Original")
+		origToggle.setTarget_(self)
+		origToggle.setAction_("originalToggled:")
+		try:
+			origToggle.setContentTintColor_(INK)
+		except Exception:
+			pass
+		view.addSubview_(origToggle)
+		self._origToggle = origToggle
+
 		# WEIGHT: big center knob, flanked by its modifiers; one shared
 		# baseline for every label and value in the section
 		sectionTitle("WEIGHT", 448)
 		self.slider = knobOnly(250, 344, 92, -200, 200, 0)
 		self.vpctSlider = knobOnly(100, 366, 48, 0, 200, 100)
 		self.cpctSlider = knobOnly(400, 366, 48, 0, 200, 100)
+		self.featherSlider = knobOnly(495, 366, 48, 0, 200, 60)
 		knobLabel(250, 326, "Weight")
 		knobLabel(100, 326, "Vertical")
 		knobLabel(400, 326, "Counters")
+		knobLabel(495, 326, "Feather")
 		self.valueField = valueField(250, 304, "+0")
 		self.vpctField = valueField(100, 304, "100%")
 		self.cpctField = valueField(400, 304, "100%")
+		self.featherField = valueField(495, 304, "60")
 
 		# SHAPE: proportions + counter pad, all in one row like the pedal
 		sectionTitle("SHAPE", 276)
-		self.widthSlider = knobOnly(75, 200, 48, 0, 200, 100)
-		self.heightSlider = knobOnly(150, 200, 48, 0, 200, 100)
-		self.tensionSlider = knobOnly(225, 200, 48, 50, 150, 100)
-		self.slantSlider = knobOnly(300, 200, 48, -30, 30, 0)
-		knobLabel(75, 182, "Width")
-		knobLabel(150, 182, "Height")
-		knobLabel(225, 182, "Tension")
-		knobLabel(300, 182, "Slant")
-		self.widthField = valueField(75, 160, "100%")
-		self.heightField = valueField(150, 160, "100%")
-		self.tensionField = valueField(225, 160, "100%")
-		self.slantField = valueField(300, 160, "+0°")
+		self.widthSlider = knobOnly(60, 200, 48, 0, 200, 100)
+		self.heightSlider = knobOnly(125, 200, 48, 0, 200, 100)
+		self.posSlider = knobOnly(190, 200, 48, -200, 200, 0)
+		self.tensionSlider = knobOnly(255, 200, 48, 50, 150, 100)
+		self.slantSlider = knobOnly(320, 200, 48, -30, 30, 0)
+		knobLabel(60, 182, "Width")
+		knobLabel(125, 182, "Height")
+		knobLabel(190, 182, "Position")
+		knobLabel(255, 182, "Tension")
+		knobLabel(320, 182, "Slant")
+		self.widthField = valueField(60, 160, "100%")
+		self.heightField = valueField(125, 160, "100%")
+		self.posField = valueField(190, 160, "+0")
+		self.tensionField = valueField(255, 160, "100%")
+		self.slantField = valueField(320, 160, "+0°")
 
-		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(327, 176, 96, 96))
+		self.pad = ProportionalWeightPad.alloc().initWithFrame_(NSMakeRect(352, 176, 96, 96))
 		self.pad.val = (0.0, 0.0)
 		self.pad.owner = self
 		view.addSubview_(self.pad)
-		knobLabel(375, 158, "Counters XY")
-		self.padField = valueField(375, 136, "0, 0")
+		knobLabel(400, 158, "Counters XY")
+		self.padField = valueField(400, 136, "0, 0")
 
 		# PERFECT: cleanup + geometry knobs
 		sectionTitle("PERFECT", 132)
@@ -458,6 +479,8 @@ class ProportionalWeight(FilterWithDialog):
 			10: (self.circSlider, self.circField, 0),
 			11: (self.tensionSlider, self.tensionField, 100),
 			12: (self.slantSlider, self.slantField, 0),
+			13: (self.posSlider, self.posField, 0),
+			14: (self.featherSlider, self.featherField, 60),
 		}
 
 		view.setAutoresizingMask_(18)  # width + height sizable
@@ -481,6 +504,10 @@ class ProportionalWeight(FilterWithDialog):
 		except Exception:
 			pass
 
+	def originalToggled_(self, sender):
+		self._showOriginal = bool(sender.state())
+		self.update()  # re-render the preview under the new mode
+
 	def resetCallback_(self, sender):
 		self.slider.setDoubleValue_(0)
 		self.vpctSlider.setDoubleValue_(100)
@@ -494,6 +521,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.circSlider.setDoubleValue_(0)
 		self.tensionSlider.setDoubleValue_(100)
 		self.slantSlider.setDoubleValue_(0)
+		self.posSlider.setDoubleValue_(0)
+		self.featherSlider.setDoubleValue_(60)
 		self.pad.val = (0.0, 0.0)
 		self.pad.setNeedsDisplay_(True)
 		self.padField.setStringValue_("0, 0")
@@ -523,6 +552,8 @@ class ProportionalWeight(FilterWithDialog):
 			'counters': self.cpctSlider.doubleValue(),
 			'width': self.widthSlider.doubleValue(),
 			'height': self.heightSlider.doubleValue(),
+			'position': self.posSlider.doubleValue(),
+			'feather': self.featherSlider.doubleValue(),
 			'tension': self.tensionSlider.doubleValue(),
 			'slant': self.slantSlider.doubleValue(),
 			'harmony': self.harmonySlider.doubleValue(),
@@ -541,6 +572,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.cpctSlider.setDoubleValue_(d.get('counters', 100))
 		self.widthSlider.setDoubleValue_(d.get('width', 100))
 		self.heightSlider.setDoubleValue_(d.get('height', 100))
+		self.posSlider.setDoubleValue_(d.get('position', 0))
+		self.featherSlider.setDoubleValue_(d.get('feather', 60))
 		self.tensionSlider.setDoubleValue_(d.get('tension', 100))
 		self.slantSlider.setDoubleValue_(d.get('slant', 0))
 		self.harmonySlider.setDoubleValue_(d.get('harmony', 0))
@@ -633,6 +666,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.circField.setStringValue_("%d%%" % round(self.circSlider.doubleValue()))
 		self.tensionField.setStringValue_("%d%%" % round(self.tensionSlider.doubleValue()))
 		self.slantField.setStringValue_("%+d°" % round(self.slantSlider.doubleValue()))
+		self.posField.setStringValue_("%+d" % round(self.posSlider.doubleValue()))
+		self.featherField.setStringValue_("%d" % round(self.featherSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -682,12 +717,88 @@ class ProportionalWeight(FilterWithDialog):
 		return t0, t1
 
 	@objc.python_method
-	def offsetLayerCustom(self, layer, ax, ay, counterFactor=1.0):
+	def _selectionStrengths(self, layer, feather):
+		"""Per-closed-path, per-on-curve-node inflate strengths (0..1) from
+		the live edit selection: 1 at selected nodes, smoothstep falloff to 0
+		over `feather` units of arc length. Returns None when there is no
+		usable point selection (caller applies weight globally). The filter
+		previews on a copy, so the selection is read off the real edit layer
+		and mapped across by node index."""
+		try:
+			font = Glyphs.font
+			if font is None or not font.selectedLayers:
+				return None
+			orig = font.selectedLayers[0]
+			selected = set()
+			for obj in (orig.selection or []):
+				if isinstance(obj, GSNode):
+					selected.add(obj)
+		except Exception:
+			return None
+		if not selected:
+			return None
+		origPaths = [s for s in orig.shapes if isinstance(s, GSPath) and s.closed]
+		copyPaths = [s for s in layer.shapes if isinstance(s, GSPath) and s.closed]
+		if not origPaths or len(origPaths) != len(copyPaths):
+			return None
+		out = []
+		anySel = False
+		for pi, path in enumerate(origPaths):
+			nodes = list(path.nodes)
+			if len(nodes) != len(copyPaths[pi].nodes):
+				return None  # structure diverged: bail to global behavior
+			onIdx = [i for i, n in enumerate(nodes) if n.type != OFFCURVE]
+			cnt = len(onIdx)
+			if cnt < 2:
+				out.append([1.0] * cnt)
+				continue
+			onOrd = {i: k for k, i in enumerate(onIdx)}
+			sel = set(onOrd[i] for i in onIdx if nodes[i] in selected)
+			# an offcurve-only selection lights up its segment's endpoints
+			total = len(nodes)
+			for i, n in enumerate(nodes):
+				if n.type != OFFCURVE or n not in selected:
+					continue
+				j = i
+				while nodes[j % total].type == OFFCURVE:
+					j -= 1
+				k1 = onOrd[j % total]
+				sel.add(k1)
+				sel.add((k1 + 1) % cnt)
+			if not sel:
+				out.append([0.0] * cnt)
+				continue
+			anySel = True
+			pts = [(nodes[i].position.x, nodes[i].position.y) for i in onIdx]
+			legs = [math.hypot(pts[(k + 1) % cnt][0] - pts[k][0],
+				pts[(k + 1) % cnt][1] - pts[k][1]) for k in range(cnt)]
+			cum = [0.0]
+			for k in range(cnt - 1):
+				cum.append(cum[-1] + legs[k])
+			T = cum[-1] + legs[-1]
+			strengths = []
+			for k in range(cnt):
+				if k in sel:
+					strengths.append(1.0)
+					continue
+				d = min(min(abs(cum[k] - cum[s]), T - abs(cum[k] - cum[s])) for s in sel)
+				if feather < 1.0 or d >= feather:
+					strengths.append(0.0)
+				else:
+					t = 1.0 - d / feather
+					strengths.append(t * t * (3.0 - 2.0 * t))
+			out.append(strengths)
+		return out if anySel else None
+
+	@objc.python_method
+	def offsetLayerCustom(self, layer, ax, ay, counterFactor=1.0, strengths=None):
 		"""Offset every closed path with true miter joins at corners.
 		Positive = bolder. Handles lines and cubics.
 		Counter paths get their offset scaled by counterFactor, so weight
 		can be pushed to the outside of the letter instead of into the
-		counters (RMX-style counter protection)."""
+		counters (RMX-style counter protection).
+		`strengths` (from _selectionStrengths) scales the offset per node,
+		so a point selection inflates locally and feathers out."""
 		scale = max(abs(ax), abs(ay))
 
 		paths = []
@@ -722,7 +833,7 @@ class ProportionalWeight(FilterWithDialog):
 			return (-t[1], t[0])
 
 		newShapes = list(others)
-		for path, origArea in zip(paths, areas):
+		for pi, (path, origArea) in enumerate(zip(paths, areas)):
 			isCounter = (origArea > 0) != ccwOuter
 			f = counterFactor if isCounter else 1.0
 
@@ -730,19 +841,30 @@ class ProportionalWeight(FilterWithDialog):
 				n = normalOf(t)
 				return (n[0] * ax * f, n[1] * ay * f)
 
+			pstr = strengths[pi] if strengths is not None else None
+			if pstr is not None and (not pstr or max(pstr) <= 0.001):
+				newShapes.append(path)  # nothing selected on this path
+				continue
+
 			segs = self.pathSegments(path)
 			if not segs:
 				newShapes.append(path)
 				continue
+			if pstr is not None and len(pstr) != len(segs):
+				pstr = None  # alignment lost: fall back to full strength
 
 			# offset each segment independently
-			for seg in segs:
+			for k, seg in enumerate(segs):
+				sA = pstr[k] if pstr is not None else 1.0
+				sB = pstr[(k + 1) % len(segs)] if pstr is not None else 1.0
 				t0, t1 = self.segTangents(seg)
 				if t0 is None or t1 is None:
 					seg['oA'], seg['oB'] = seg['A'], seg['B']
 					seg['t0'], seg['t1'] = (1, 0), (1, 0)
 					continue
 				d0, d1 = disp(t0), disp(t1)
+				d0 = (d0[0] * sA, d0[1] * sA)
+				d1 = (d1[0] * sB, d1[1] * sB)
 				seg['t0'], seg['t1'] = t0, t1
 				seg['oA'] = (seg['A'][0] + d0[0], seg['A'][1] + d0[1])
 				seg['oB'] = (seg['B'][0] + d1[0], seg['B'][1] + d1[1])
@@ -758,9 +880,11 @@ class ProportionalWeight(FilterWithDialog):
 					eT[0] = eT[0] or eT[1] or (t0[0], t0[1])
 					eT[1] = eT[1] or eT[0]
 					eT[2] = eT[2] or eT[1]
+					eS = (sA, (sA + sB) / 2.0, sB)
 					offE = []
 					for j in range(3):
 						dj = disp(eT[j])
+						dj = (dj[0] * eS[j], dj[1] * eS[j])
 						offE.append(((pts[j][0] + dj[0], pts[j][1] + dj[1]),
 							(pts[j + 1][0] + dj[0], pts[j + 1][1] + dj[1]), eT[j]))
 					c1t = offE[0][1]  # translation fallback
@@ -1313,6 +1437,13 @@ class ProportionalWeight(FilterWithDialog):
 	@objc.python_method
 	def filter(self, layer, inEditView, customParameters):
 		try:
+			# Original toggle: leave the preview copy untouched so the edit
+			# view shows the real outline for before/after flipping. Only
+			# previews run with inEditView=True; Apply comes through with
+			# inEditView=False and is never skipped.
+			if (inEditView and not customParameters
+					and getattr(self, '_showOriginal', False)):
+				return
 			if 'amount' in customParameters:
 				amount = float(customParameters['amount'])
 			else:
@@ -1330,9 +1461,9 @@ class ProportionalWeight(FilterWithDialog):
 			else:
 				wpct = self.widthSlider.doubleValue()
 			if 'harmony' in customParameters:
-				hpct = float(customParameters['harmony'])
+				harmPct = float(customParameters['harmony'])
 			else:
-				hpct = self.harmonySlider.doubleValue()
+				harmPct = self.harmonySlider.doubleValue()
 			if 'balance' in customParameters:
 				bpct = float(customParameters['balance'])
 			else:
@@ -1341,6 +1472,14 @@ class ProportionalWeight(FilterWithDialog):
 				hpct = float(customParameters['height'])
 			else:
 				hpct = self.heightSlider.doubleValue()
+			if 'position' in customParameters:
+				posY = float(customParameters['position'])
+			else:
+				posY = self.posSlider.doubleValue()
+			if 'feather' in customParameters:
+				featherU = float(customParameters['feather'])
+			else:
+				featherU = self.featherSlider.doubleValue()
 			if 'slant' in customParameters:
 				slantDeg = float(customParameters['slant'])
 			else:
@@ -1379,7 +1518,14 @@ class ProportionalWeight(FilterWithDialog):
 				if before.size.width > 0 and before.size.height > 0:
 					ax = amount
 					ay = amount * vpct / 100.0
-					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0):
+					# point selection: inflate locally with a feathered falloff
+					# instead of offsetting the whole glyph. Runs for preview
+					# AND Apply (Apply has inEditView=False) so what you saw is
+					# what you get; instances (customParameters) stay global.
+					strengths = None
+					if not customParameters:
+						strengths = self._selectionStrengths(layer, featherU)
+					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0, strengths):
 						# boolean cleanup, THIN DIRECTION ONLY: that is where
 						# non-adjacent edges cross and spike. Skipped when the
 						# glyph is built from overlapping construction paths,
@@ -1390,14 +1536,17 @@ class ProportionalWeight(FilterWithDialog):
 								layer.removeOverlap()
 							except Exception:
 								pass
-						after = layer.bounds
-						if after.size.width > 0 and after.size.height > 0:
-							# restore the original bounding box: proportions preserved
-							sx = before.size.width / after.size.width
-							sy = before.size.height / after.size.height
-							tx = before.origin.x - sx * after.origin.x
-							ty = before.origin.y - sy * after.origin.y
-							layer.applyTransform((sx, 0, 0, sy, tx, ty))
+						if strengths is None:
+							after = layer.bounds
+							if after.size.width > 0 and after.size.height > 0:
+								# restore the original bounding box: proportions preserved
+								sx = before.size.width / after.size.width
+								sy = before.size.height / after.size.height
+								tx = before.origin.x - sx * after.origin.x
+								ty = before.origin.y - sy * after.origin.y
+								layer.applyTransform((sx, 0, 0, sy, tx, ty))
+						# local inflate keeps the bbox untouched: the point of a
+						# partial offset is that the change stays where you put it
 
 			# width: condense/extend outlines and advance width together
 			# (floor keeps the slider's 0 end from collapsing the glyph).
@@ -1425,6 +1574,10 @@ class ProportionalWeight(FilterWithDialog):
 			if abs(h - 1.0) >= 0.0001:
 				layer.applyTransform((1, 0, 0, h, 0, 0))
 
+			# position: shift all paths vertically
+			if abs(posY) >= 0.01:
+				layer.applyTransform((1, 0, 0, 1, 0, posY))
+
 			# slant after the scales, before perfection/cleanup
 			self.slantLayer(layer, slantDeg)
 
@@ -1438,14 +1591,14 @@ class ProportionalWeight(FilterWithDialog):
 			# did to the curves (balance evens the handles, harmony restores
 			# G2 continuity at smooth joins)
 			self.balanceLayer(layer, bpct / 100.0)
-			self.harmonizeLayer(layer, hpct / 100.0)
+			self.harmonizeLayer(layer, harmPct / 100.0)
 		except Exception:
 			print(traceback.format_exc())
 
 	@objc.python_method
 	def generateCustomParameter(self):
 		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; height:%s; "
-			"harmony:%s; balance:%s; anglesnap:%s; facets:%s; circular:%s; "
+			"position:%s; harmony:%s; balance:%s; anglesnap:%s; facets:%s; circular:%s; "
 			"tension:%s; slant:%s; countershiftx:%s; countershifty:%s") % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
@@ -1453,6 +1606,7 @@ class ProportionalWeight(FilterWithDialog):
 			round(self.cpctSlider.doubleValue()),
 			round(self.widthSlider.doubleValue()),
 			round(self.heightSlider.doubleValue()),
+			round(self.posSlider.doubleValue()),
 			round(self.harmonySlider.doubleValue()),
 			round(self.balanceSlider.doubleValue()),
 			round(self.snapSlider.doubleValue()),
