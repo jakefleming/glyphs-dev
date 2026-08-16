@@ -592,6 +592,12 @@ class MakeItalic(FilterWithDialog):
 					if dE0 is None or dE3 is None:
 						noCorner()
 						continue
+					# Italify's rule: a segment is only "round" if at least one end
+					# sits on an axis extreme (real or reached by extension); a
+					# shallow curve with neither is left alone (v/w/x sides, terminals)
+					if _axisKind(dE0) is None and _axisKind(dE3) is None:
+						noCorner()
+						continue
 					hit = _rayInt(E[0], dE0, E[3], (-dE3[0], -dE3[1]))
 					if hit is None:
 						noCorner()
