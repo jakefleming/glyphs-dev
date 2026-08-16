@@ -31,6 +31,16 @@ INK = _c(0.14, 0.13, 0.12)
 ORANGE = _c(0.922, 0.314, 0.027)
 
 
+class PWPresetButton(NSButton):
+	"""Numbered preset slot. Left-click recalls (or stores when armed);
+	right-click clears the slot."""
+
+	def rightMouseDown_(self, event):
+		owner = getattr(self, 'owner', None)
+		if owner is not None:
+			owner.clearPreset_(self)
+
+
 class PWPanel(NSView):
 	"""Flat cream panel: title, section rules, mascot. Scales its fixed
 	design to whatever frame the host window gives it (pedal-style resize:
@@ -311,7 +321,7 @@ class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
 	def settings(self):
-		self.menuName = "Proportional Weight"
+		self.menuName = "lil Devil"
 		self.actionButtonLabel = "Apply"
 
 		view = PWPanel.alloc().initWithFrame_(NSMakeRect(0, 0, 600, 560))
@@ -372,17 +382,38 @@ class ProportionalWeight(FilterWithDialog):
 			view.addSubview_(k)
 			return k
 
-		# presets: click loads, Option-click saves, orange = filled
+		# presets: 1-5 recall, Save arms the next click to store, right-click clears
+		self._presetArmed = False
 		self._presetBtns = []
 		for slot in range(5):
-			pb = NSButton.alloc().initWithFrame_(NSMakeRect(12 + slot * 30, 516, 26, 24))
+			pb = PWPresetButton.alloc().initWithFrame_(NSMakeRect(12 + slot * 30, 516, 26, 24))
+			pb.owner = self
 			pb.setTitle_(str(slot + 1))
 			pb.setBezelStyle_(1)
 			pb.setTag_(slot)
 			pb.setTarget_(self)
 			pb.setAction_("presetClicked:")
+			pb.setToolTip_("Click to recall this preset. Press Save first to store the current settings here. Right-click to clear.")
 			view.addSubview_(pb)
 			self._presetBtns.append(pb)
+
+		self.saveBtn = NSButton.alloc().initWithFrame_(NSMakeRect(12 + 5 * 30 + 6, 516, 56, 24))
+		self.saveBtn.setTitle_("Save")
+		self.saveBtn.setBezelStyle_(1)
+		self.saveBtn.setTarget_(self)
+		self.saveBtn.setAction_("armPreset:")
+		self.saveBtn.setToolTip_("Press Save, then click a numbered slot to store the current settings there.")
+		view.addSubview_(self.saveBtn)
+
+		self.presetHint = NSTextField.alloc().initWithFrame_(NSMakeRect(12, 496, 320, 16))
+		self.presetHint.setStringValue_("Presets: click to recall · Save then a slot to store")
+		self.presetHint.setBezeled_(False)
+		self.presetHint.setDrawsBackground_(False)
+		self.presetHint.setEditable_(False)
+		self.presetHint.setSelectable_(False)
+		self.presetHint.setFont_(NSFont.systemFontOfSize_(9))
+		self.presetHint.setTextColor_(INK.colorWithAlphaComponent_(0.55))
+		view.addSubview_(self.presetHint)
 		self._refreshPresetButtons()
 
 		# Reset (drag knobs vertically; Option = fine; double-click = reset)
@@ -606,20 +637,57 @@ class ProportionalWeight(FilterWithDialog):
 		for pb in self._presetBtns:
 			filled = presets[pb.tag()] is not None
 			try:
-				pb.setContentTintColor_(ORANGE if filled else None)
+				pb.setContentTintColor_(ORANGE if filled else INK.colorWithAlphaComponent_(0.35))
+				pb.setToolTip_(("Slot %d — click to recall, right-click to clear" % (pb.tag() + 1))
+					if filled else ("Slot %d is empty — press Save, then click here" % (pb.tag() + 1)))
 			except Exception:
 				pass
+
+	def armPreset_(self, sender):
+		"""Save button: arm the next slot click to store instead of recall."""
+		self._presetArmed = not getattr(self, '_presetArmed', False)
+		self._setHint("Click a slot (1-5) to save the current settings there"
+			if self._presetArmed else "Presets: click to recall · Save then a slot to store")
+		try:
+			self.saveBtn.setContentTintColor_(ORANGE if self._presetArmed else None)
+		except Exception:
+			pass
+
+	@objc.python_method
+	def _setHint(self, text):
+		try:
+			self.presetHint.setStringValue_(text)
+		except Exception:
+			pass
 
 	def presetClicked_(self, sender):
 		slot = sender.tag()
 		presets = self._loadPresets()
-		if NSEvent.modifierFlags() & (1 << 19):  # Option: save current
+		# store when armed by the Save button, or with the old Option-click
+		if getattr(self, '_presetArmed', False) or (NSEvent.modifierFlags() & (1 << 19)):
 			presets[slot] = self._stateDict()
 			Glyphs.defaults[PRESETS_KEY] = json.dumps(presets)
+			self._presetArmed = False
+			try:
+				self.saveBtn.setContentTintColor_(None)
+			except Exception:
+				pass
 			self._refreshPresetButtons()
+			self._setHint("Saved to slot %d" % (slot + 1))
 			return
 		if presets[slot] is not None:
 			self._applyStateDict(presets[slot])
+			self._setHint("Recalled slot %d" % (slot + 1))
+		else:
+			self._setHint("Slot %d is empty — press Save, then click it" % (slot + 1))
+
+	def clearPreset_(self, sender):
+		slot = sender.tag()
+		presets = self._loadPresets()
+		presets[slot] = None
+		Glyphs.defaults[PRESETS_KEY] = json.dumps(presets)
+		self._refreshPresetButtons()
+		self._setHint("Cleared slot %d" % (slot + 1))
 
 	@objc.python_method
 	def padChanged(self):
