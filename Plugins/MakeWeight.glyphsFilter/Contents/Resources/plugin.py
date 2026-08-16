@@ -33,6 +33,7 @@ from AppKit import NSView, NSSlider, NSTextField, NSMakeRect, NSFont
 from Foundation import NSMakePoint
 
 MITER_LIMIT = 8.0   # corner extension cap, multiples of the offset
+THIN_MAX = 0.42     # thinning: max fraction of the local stroke width one side may move
 WELD_EPS = 0.25
 
 
@@ -215,7 +216,7 @@ class MakeWeight(FilterWithDialog):
 					pieces.append((a, b, pi))
 
 		def facingPath(P, nW):
-			"""Index of the path first hit when casting from P into the black."""
+			"""(distance, path index) of the first hit casting from P into the black."""
 			d = (-nW[0], -nW[1])
 			best = None
 			for a, b, pi in pieces:
@@ -230,7 +231,7 @@ class MakeWeight(FilterWithDialog):
 					continue
 				if best is None or sdist < best[0]:
 					best = (sdist, pi)
-			return None if best is None else best[1]
+			return best
 
 		for pi, (path, area) in enumerate(zip(paths, areas)):
 			segs = allSegs[pi]
@@ -253,11 +254,36 @@ class MakeWeight(FilterWithDialog):
 					mt = 0.5
 					tM = _unit(3 * (mt * mt * (C[1][0] - C[0][0]) + 2 * mt * mt * (C[2][0] - C[1][0]) + mt * mt * (C[3][0] - C[2][0])),
 						3 * (mt * mt * (C[1][1] - C[0][1]) + 2 * mt * mt * (C[2][1] - C[1][1]) + mt * mt * (C[3][1] - C[2][1])))
-				hitPi = facingPath(M, whiteN(tM)) if tM else None
+				hit = facingPath(M, whiteN(tM)) if tM else None
+				hitPi = hit[1] if hit else None
 				if hitPi is not None and isCounterPath[hitPi]:
 					seg['amt'] = weight * counters       # outer side of a counter-bounded stroke
 				else:
 					seg['amt'] = weight * 0.5            # both sides outer: symmetric pen
+				seg['localW'] = hit[0] if hit else None
+
+			# thinning: a side may never travel more than THIN_MAX of the local
+			# stroke width, or the two sides cross and the stroke turns inside out
+			if weight < 0:
+				for seg in segs:
+					lw = seg.get('localW')
+					if lw is None and not isCounter:
+						continue
+					if lw is None:
+						# counters: measure from this segment's middle too
+						if seg['c1'] is None:
+							M = ((seg['A'][0] + seg['B'][0]) / 2.0, (seg['A'][1] + seg['B'][1]) / 2.0)
+							tM = _unit(seg['B'][0] - seg['A'][0], seg['B'][1] - seg['A'][1])
+						else:
+							C = (seg['A'], seg['c1'], seg['c2'], seg['B'])
+							M = _bez(C, 0.5)
+							tM = _unit(C[3][0] - C[0][0] + C[2][0] - C[1][0], C[3][1] - C[0][1] + C[2][1] - C[1][1])
+						hit = facingPath(M, whiteN(tM)) if tM else None
+						lw = hit[0] if hit else None
+					if lw is not None:
+						cap = THIN_MAX * lw
+						if abs(seg['amt']) > cap:
+							seg['amt'] = -cap
 
 			def dispFor(seg, t):
 				n = whiteN(t)
