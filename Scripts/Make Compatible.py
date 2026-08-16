@@ -12,6 +12,10 @@ a reference master (the first master by default):
   5. node counts     — missing nodes inserted in the sparser master at the
                        matching places (extremes first, then even spacing
                        between corresponding corners)
+  6. anchors         — an anchor present in the reference but missing in another
+                       master is added at the same proportional position and
+                       reported so you can check it; extra anchors are reported,
+                       never deleted
 
 Anything it cannot decide — different corner structure, different path counts,
 components vs outlines — is left alone and listed at the end.
@@ -23,7 +27,7 @@ run on the whole font.
 import math
 import traceback
 from Foundation import NSPoint
-from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
+from GlyphsApp import Glyphs, GSPath, GSNode, GSAnchor, LINE, CURVE, OFFCURVE
 
 CORNER_ANGLE = 35.0   # deg: direction change that counts as a corner
 BACKUP = True         # copy each layer to its background before touching it
@@ -310,6 +314,37 @@ def matchNodeCount(refPath, path):
 	return inserted, False
 
 
+def matchAnchors(refLayer, layer, glyphName, layerName, report):
+	"""Anchors must exist with the same names in every master. Add any that are
+	missing, placed by proportion from the reference layer's bounding box, and
+	report each one so it can be checked. Extra anchors are reported, never
+	deleted."""
+	refNames = [a.name for a in refLayer.anchors]
+	names = [a.name for a in layer.anchors]
+	added = 0
+	missing = [n for n in refNames if n not in names]
+	extra = [n for n in names if n not in refNames]
+	if missing:
+		rb, b = refLayer.bounds, layer.bounds
+		for nm in missing:
+			ra = refLayer.anchors[nm]
+			if rb.size.width > 0 and rb.size.height > 0 and b.size.width > 0 and b.size.height > 0:
+				fx = (ra.position.x - rb.origin.x) / rb.size.width
+				fy = (ra.position.y - rb.origin.y) / rb.size.height
+				x = b.origin.x + fx * b.size.width
+				y = b.origin.y + fy * b.size.height
+			else:
+				x, y = ra.position.x, ra.position.y
+			layer.anchors.append(GSAnchor(nm, NSPoint(round(x), round(y))))
+			added += 1
+			report.append("%s / %s: added anchor '%s' at (%d, %d) — check its position"
+				% (glyphName, layerName, nm, round(x), round(y)))
+	for nm in extra:
+		report.append("%s / %s: has anchor '%s' that %s does not — remove it or add it there"
+			% (glyphName, layerName, nm, refLayer.name))
+	return added
+
+
 # ---------------------------------------------------------------- main
 
 font = Glyphs.font
@@ -321,7 +356,7 @@ else:
 	masters = list(font.masters)
 	refM = masters[0]
 	report = []
-	stats = {'order': 0, 'direction': 0, 'start': 0, 'types': 0, 'nodes': 0, 'glyphs': 0}
+	stats = {'order': 0, 'direction': 0, 'start': 0, 'types': 0, 'nodes': 0, 'anchors': 0, 'glyphs': 0}
 
 	font.disableUpdateInterface()
 	try:
@@ -338,6 +373,18 @@ else:
 			touched = False
 			glyph.beginUndo()
 			for layer in layers[1:]:
+				# anchors first: they are independent of the outlines, and a
+				# missing anchor breaks every composite built on this glyph
+				if BACKUP and not touched and (
+						[a.name for a in ref.anchors] != [a.name for a in layer.anchors]):
+					for l in layers:
+						l.setBackground_(l)
+					touched = True
+				n = matchAnchors(ref, layer, glyph.name, layer.name, report)
+				if n:
+					stats['anchors'] += n
+					touched = True
+
 				refPaths = [s for s in ref.shapes if isinstance(s, GSPath)]
 				paths = [s for s in layer.shapes if isinstance(s, GSPath)]
 				if len(refPaths) != len(paths):
@@ -381,8 +428,8 @@ else:
 		font.enableUpdateInterface()
 
 	print("Make Compatible — reference master: %s" % refM.name)
-	print("  changed %d glyph(s): %d path reorders, %d direction flips, %d start-node rotations, %d line→curve, %d nodes inserted"
-		% (stats['glyphs'], stats['order'], stats['direction'], stats['start'], stats['types'], stats['nodes']))
+	print("  changed %d glyph(s): %d path reorders, %d direction flips, %d start-node rotations, %d line→curve, %d nodes inserted, %d anchors added"
+		% (stats['glyphs'], stats['order'], stats['direction'], stats['start'], stats['types'], stats['nodes'], stats['anchors']))
 	if report:
 		print("  %d left for you:" % len(report))
 		for line in report:
