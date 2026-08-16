@@ -174,7 +174,7 @@ class MakeWeight(FilterWithDialog):
 		return t0, t1
 
 	@objc.python_method
-	def weightLayer(self, layer, weight, counters, rounds, vertical):
+	def weightLayer(self, layer, weight, counters, rounds, vertical, cleanup=True):
 		if abs(weight) < 0.01:
 			return
 		paths = [s for s in layer.shapes if isinstance(s, GSPath) and s.closed]
@@ -382,6 +382,17 @@ class MakeWeight(FilterWithDialog):
 				if seg['c1'] is not None:
 					nodes[seg['i1']].position = NSMakePoint(seg['oc1'][0], seg['oc1'][1])
 					nodes[seg['i2']].position = NSMakePoint(seg['oc2'][0], seg['oc2'][1])
+
+		# ---- thinning: acute joins (crossbar into bowl, tails, crotches) leave
+		# small self-intersecting flaps once the offset exceeds what the miter
+		# limit can resolve; clean them up like an offset filter does. This is
+		# the one place node structure is not preserved (heavy thinning only).
+		if weight < 0 and cleanup:
+			try:
+				layer.correctPathDirection()
+				layer.removeOverlap()
+			except Exception:
+				pass
 
 	# ------------------------------------------------------------ filter
 
