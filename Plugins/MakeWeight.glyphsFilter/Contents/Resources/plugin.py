@@ -33,7 +33,7 @@ from AppKit import NSView, NSSlider, NSTextField, NSMakeRect, NSFont
 from Foundation import NSMakePoint
 
 MITER_LIMIT = 8.0   # corner extension cap, multiples of the offset
-THIN_MAX = 0.42     # thinning: max fraction of the local stroke width one side may move
+THIN_MAX = 0.47     # thinning: max fraction of the local stroke width one side may move
 WELD_EPS = 0.25
 
 
@@ -285,9 +285,19 @@ class MakeWeight(FilterWithDialog):
 						if abs(seg['amt']) > cap:
 							seg['amt'] = -cap
 
-			def dispFor(seg, t):
+			# per-END amounts: a node takes the more conservative (smaller |amt|)
+			# of its two segments so the outline stays continuous across joins
+			nsegs_ = len(segs)
+			for i, seg in enumerate(segs):
+				prevS, nextS = segs[i - 1], segs[(i + 1) % nsegs_]
+				def pick(a, b):
+					return a if abs(a) <= abs(b) else b
+				seg['amtA'] = pick(seg['amt'], prevS['amt'])
+				seg['amtB'] = pick(seg['amt'], nextS['amt'])
+
+			def dispFor(t, amt):
 				n = whiteN(t)
-				return (n[0] * seg['amt'], n[1] * seg['amt'] * vfac)
+				return (n[0] * amt, n[1] * amt * vfac)
 
 			# ---- offset every segment independently (Tiller-Hanson for curves)
 			for seg in segs:
@@ -296,7 +306,7 @@ class MakeWeight(FilterWithDialog):
 					seg['oA'], seg['oB'] = seg['A'], seg['B']
 					seg['t0'], seg['t1'] = (1, 0), (1, 0)
 					continue
-				d0, d1 = dispFor(seg, t0), dispFor(seg, t1)
+				d0, d1 = dispFor(t0, seg['amtA']), dispFor(t1, seg['amtB'])
 				seg['t0'], seg['t1'] = t0, t1
 				seg['oA'] = (seg['A'][0] + d0[0], seg['A'][1] + d0[1])
 				seg['oB'] = (seg['B'][0] + d1[0], seg['B'][1] + d1[1])
@@ -307,15 +317,16 @@ class MakeWeight(FilterWithDialog):
 					eT[1] = eT[1] or eT[0]
 					eT[2] = eT[2] or eT[1]
 					offE = []
+					edgeAmt = (seg['amtA'], (seg['amtA'] + seg['amtB']) / 2.0, seg['amtB'])
 					for j in range(3):
-						dj = dispFor(seg, eT[j])
+						dj = dispFor(eT[j], edgeAmt[j])
 						offE.append(((pts[j][0] + dj[0], pts[j][1] + dj[1]), (pts[j + 1][0] + dj[0], pts[j + 1][1] + dj[1]), eT[j]))
 					c1t, c2t = offE[0][1], offE[2][0]
 					h1 = _lineInt(offE[0][0], offE[0][2], offE[1][0], offE[1][2])
 					h2 = _lineInt(offE[1][0], offE[1][2], offE[2][0], offE[2][2])
 					c1n = h1 if h1 is not None else c1t
 					c2n = h2 if h2 is not None else c2t
-					lim = 4 * abs(seg['amt']) + 4
+					lim = 4 * max(abs(seg['amtA']), abs(seg['amtB'])) + 4
 					if math.hypot(c1n[0] - c1t[0], c1n[1] - c1t[1]) > lim:
 						c1n = c1t
 					if math.hypot(c2n[0] - c2t[0], c2n[1] - c2t[1]) > lim:
