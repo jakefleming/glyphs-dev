@@ -412,17 +412,23 @@ class ProportionalWeight(FilterWithDialog):
 		# baseline for every label and value in the section
 		sectionTitle("WEIGHT", 448)
 		self.slider = knobOnly(250, 344, 92, -200, 200, 0)
-		self.vpctSlider = knobOnly(100, 366, 48, 0, 200, 100)
-		self.cpctSlider = knobOnly(400, 366, 48, 0, 200, 100)
-		self.featherSlider = knobOnly(495, 366, 48, 0, 200, 60)
+		self.vpctSlider = knobOnly(90, 366, 48, 0, 200, 100)
+		self.stressSlider = knobOnly(160, 366, 40, -45, 90, 0)
+		self.pressureSlider = knobOnly(340, 366, 40, 0, 100, 0)
+		self.cpctSlider = knobOnly(410, 366, 48, 0, 200, 100)
+		self.featherSlider = knobOnly(500, 366, 48, 0, 200, 60)
 		knobLabel(250, 326, "Weight")
-		knobLabel(100, 326, "Vertical")
-		knobLabel(400, 326, "Counters")
-		knobLabel(495, 326, "Feather")
+		knobLabel(90, 326, "Vertical")
+		knobLabel(160, 326, "Stress")
+		knobLabel(340, 326, "Pressure")
+		knobLabel(410, 326, "Counters")
+		knobLabel(500, 326, "Feather")
 		self.valueField = valueField(250, 304, "+0")
-		self.vpctField = valueField(100, 304, "100%")
-		self.cpctField = valueField(400, 304, "100%")
-		self.featherField = valueField(495, 304, "60")
+		self.vpctField = valueField(90, 304, "100%")
+		self.stressField = valueField(160, 304, "0°")
+		self.pressureField = valueField(340, 304, "0%")
+		self.cpctField = valueField(410, 304, "100%")
+		self.featherField = valueField(500, 304, "60")
 
 		# SHAPE: proportions + counter pad, all in one row like the pedal
 		sectionTitle("SHAPE", 276)
@@ -481,6 +487,8 @@ class ProportionalWeight(FilterWithDialog):
 			12: (self.slantSlider, self.slantField, 0),
 			13: (self.posSlider, self.posField, 0),
 			14: (self.featherSlider, self.featherField, 60),
+			15: (self.stressSlider, self.stressField, 0),
+			16: (self.pressureSlider, self.pressureField, 0),
 		}
 
 		view.setAutoresizingMask_(18)  # width + height sizable
@@ -523,6 +531,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.slantSlider.setDoubleValue_(0)
 		self.posSlider.setDoubleValue_(0)
 		self.featherSlider.setDoubleValue_(60)
+		self.stressSlider.setDoubleValue_(0)
+		self.pressureSlider.setDoubleValue_(0)
 		self.pad.val = (0.0, 0.0)
 		self.pad.setNeedsDisplay_(True)
 		self.padField.setStringValue_("0, 0")
@@ -554,6 +564,8 @@ class ProportionalWeight(FilterWithDialog):
 			'height': self.heightSlider.doubleValue(),
 			'position': self.posSlider.doubleValue(),
 			'feather': self.featherSlider.doubleValue(),
+			'stress': self.stressSlider.doubleValue(),
+			'pressure': self.pressureSlider.doubleValue(),
 			'tension': self.tensionSlider.doubleValue(),
 			'slant': self.slantSlider.doubleValue(),
 			'harmony': self.harmonySlider.doubleValue(),
@@ -574,6 +586,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.heightSlider.setDoubleValue_(d.get('height', 100))
 		self.posSlider.setDoubleValue_(d.get('position', 0))
 		self.featherSlider.setDoubleValue_(d.get('feather', 60))
+		self.stressSlider.setDoubleValue_(d.get('stress', 0))
+		self.pressureSlider.setDoubleValue_(d.get('pressure', 0))
 		self.tensionSlider.setDoubleValue_(d.get('tension', 100))
 		self.slantSlider.setDoubleValue_(d.get('slant', 0))
 		self.harmonySlider.setDoubleValue_(d.get('harmony', 0))
@@ -668,6 +682,8 @@ class ProportionalWeight(FilterWithDialog):
 		self.slantField.setStringValue_("%+d°" % round(self.slantSlider.doubleValue()))
 		self.posField.setStringValue_("%+d" % round(self.posSlider.doubleValue()))
 		self.featherField.setStringValue_("%d" % round(self.featherSlider.doubleValue()))
+		self.stressField.setStringValue_("%d°" % round(self.stressSlider.doubleValue()))
+		self.pressureField.setStringValue_("%d%%" % round(self.pressureSlider.doubleValue()))
 		self.update()
 
 	# ---------------- offset engine ----------------
@@ -791,7 +807,7 @@ class ProportionalWeight(FilterWithDialog):
 		return out if anySel else None
 
 	@objc.python_method
-	def offsetLayerCustom(self, layer, ax, ay, counterFactor=1.0, strengths=None):
+	def offsetLayerCustom(self, layer, ax, ay, counterFactor=1.0, strengths=None, penAngle=0.0, pressure=0.0):
 		"""Offset every closed path with true miter joins at corners.
 		Positive = bolder. Handles lines and cubics.
 		Counter paths get their offset scaled by counterFactor, so weight
@@ -837,9 +853,22 @@ class ProportionalWeight(FilterWithDialog):
 			isCounter = (origArea > 0) != ccwOuter
 			f = counterFactor if isCounter else 1.0
 
+			# broad-nib / pointed-pen modulation: a stroke's weight depends on
+			# its angle relative to the pen. |sin(stroke - pen)| is 1 across the
+			# pen (thick downstrokes) and 0 along it (hairline up-strokes /
+			# horizontals). Pressure blends from isotropic (0) to full nib (1).
+			penRad = math.radians(penAngle)
+
+			def penFactor(t):
+				if pressure <= 0:
+					return 1.0
+				ang = math.atan2(t[1], t[0])
+				return 1.0 - pressure * (1.0 - abs(math.sin(ang - penRad)))
+
 			def disp(t):
 				n = normalOf(t)
-				return (n[0] * ax * f, n[1] * ay * f)
+				pf = penFactor(t)
+				return (n[0] * ax * f * pf, n[1] * ay * f * pf)
 
 			pstr = strengths[pi] if strengths is not None else None
 			if pstr is not None and (not pstr or max(pstr) <= 0.001):
@@ -1480,6 +1509,14 @@ class ProportionalWeight(FilterWithDialog):
 				featherU = float(customParameters['feather'])
 			else:
 				featherU = self.featherSlider.doubleValue()
+			if 'stress' in customParameters:
+				stressDeg = float(customParameters['stress'])
+			else:
+				stressDeg = self.stressSlider.doubleValue()
+			if 'pressure' in customParameters:
+				pressPct = float(customParameters['pressure'])
+			else:
+				pressPct = self.pressureSlider.doubleValue()
 			if 'slant' in customParameters:
 				slantDeg = float(customParameters['slant'])
 			else:
@@ -1525,7 +1562,7 @@ class ProportionalWeight(FilterWithDialog):
 					strengths = None
 					if not customParameters:
 						strengths = self._selectionStrengths(layer, featherU)
-					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0, strengths):
+					if self.offsetLayerCustom(layer, ax, ay, cpct / 100.0, strengths, stressDeg, pressPct / 100.0):
 						# boolean cleanup, THIN DIRECTION ONLY: that is where
 						# non-adjacent edges cross and spike. Skipped when the
 						# glyph is built from overlapping construction paths,
@@ -1597,12 +1634,14 @@ class ProportionalWeight(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return ("%s; amount:%s; vertical:%s; counters:%s; width:%s; height:%s; "
+		return ("%s; amount:%s; vertical:%s; stress:%s; pressure:%s; counters:%s; width:%s; height:%s; "
 			"position:%s; harmony:%s; balance:%s; anglesnap:%s; facets:%s; circular:%s; "
 			"tension:%s; slant:%s; countershiftx:%s; countershifty:%s") % (
 			self.__class__.__name__,
 			round(self.slider.doubleValue()),
 			round(self.vpctSlider.doubleValue()),
+			round(self.stressSlider.doubleValue()),
+			round(self.pressureSlider.doubleValue()),
 			round(self.cpctSlider.doubleValue()),
 			round(self.widthSlider.doubleValue()),
 			round(self.heightSlider.doubleValue()),
