@@ -31,6 +31,12 @@ Symlinked into `~/Library/Application Support/Glyphs 3/Plugins/`. Plugins load a
 
   Also usable as a custom parameter: `ProportionalWeight; amount:N; vertical:N; counters:N; width:N; harmony:N; balance:N`.
 
+### Graver Spacing
+
+**Graver Spacing** (`Plugins/GraverSpacing.glyphsPlugin`) adds opt-in automatic spacing and kerning through **Edit → Graver Spacing…**. It preserves manual adjustments and includes the undo/redo and fractional-coordinate fixes. Current scope is single-master Latin fonts; see [the development README](Plugins/GraverSpacing/README.md) for limitations and recorded validation.
+
+The Swift engine source, build command, regression tests, and fixtures live in [`Plugins/GraverSpacing/`](Plugins/GraverSpacing/). The installed Glyphs bundle is symlinked to this repository, matching the other development plugins.
+
 ### Python plugin bundle anatomy
 
 A hand-built Python plugin needs, or it won't load:

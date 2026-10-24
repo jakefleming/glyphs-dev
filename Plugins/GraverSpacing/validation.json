@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-21",
+  "glyphsVersion": "3.4.1 (3436)",
+  "passed": true,
+  "nativeChecks": [
+    "auto == undo-manual (complete outline/metric/kerning/state comparison)",
+    "manual == redo-manual (complete outline/metric/kerning/state comparison)",
+    "manual == undo-outline (complete outline/metric/kerning/state comparison)",
+    "outline == redo-outline (complete outline/metric/kerning/state comparison)",
+    "auto == clean (complete outline/metric/kerning/state comparison)",
+    "rounding-before == rounding-undo (complete outline/metric/kerning/state comparison)",
+    "rounding-after == rounding-redo (complete outline/metric/kerning/state comparison)"
+  ],
+  "finalNativeResult": {
+    "passed": true,
+    "redoExact": true,
+    "contoursPreserved": true,
+    "export": true,
+    "originalAutoEnabled": false
+  },
+  "originalKerningPreserved": 16,
+  "measuredGlyphs": 81,
+  "pureTests": {
+    "state": 6,
+    "undo": 4,
+    "metrics": 3,
+    "engine": "deterministic, incremental pairs, fixed-side precedence, italic input"
+  },
+  "limitations": [
+    "Experimental single-master Latin version",
+    "Automatic spacing adds a separate Undo step",
+    "No synchronization with export launched during pending calculation",
+    "Generated kerning is individual pairs, not class-packed",
+    "Installed launcher requires Glyphs restart; no forced restart or production-font enablement"
+  ]
+}
