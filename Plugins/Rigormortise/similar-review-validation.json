@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-25",
+  "automatedUnitTestsPassed": 63,
+  "engineChecksPassed": true,
+  "nativeApplication": "Glyphs 3",
+  "nativePanelVisuallyChecked": true,
+  "nativeProofVisuallyChecked": true,
+  "nativeChecks": {
+    "recordedEdit": true,
+    "conservativeDefault": true,
+    "previewReadOnly": true,
+    "hasMatches": true,
+    "skipAndAuthoredProtected": true,
+    "approvedScopeMatchesPreview": true,
+    "proofCopyCreated": true,
+    "proofLeavesTestUnchanged": true,
+    "changedSkipRejectsStalePreview": true,
+    "applyMatchesPreview": true,
+    "manualValuesPreserved": true,
+    "skipPreserved": true,
+    "undoExact": true,
+    "redoExact": true,
+    "savedApprovalScopeReloads": true,
+    "laterRuleProtectsApprovals": true,
+    "ruleRemovalRestoresAuto": true,
+    "sourceUnchanged": true,
+    "allPassed": true
+  }
+}

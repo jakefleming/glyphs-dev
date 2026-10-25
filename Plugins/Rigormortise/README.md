@@ -41,6 +41,7 @@ python3 test_master_state.py
 python3 test_state.py
 python3 test_baseline.py
 python3 test_similar_pairs.py
+python3 test_similar_review.py
 python3 test_undo_state.py
 python3 test_metrics.py
 python3 test_engine.py
@@ -183,7 +184,9 @@ from the first observed value; a new exception measures against inherited class
 kerning. You can also enter the intended change in units: positive loosens,
 negative tightens. The example pair itself remains your manual override.
 
-Choose **Similarity** and **Strength**, then **Preview matches**. The list shows
+Choose **Similarity** (90% by default) and **Strength**, then **Preview matches**.
+Use **Skip pairs** for exceptions, entering two glyph names per pair separated
+by commas, such as `i period, j period`. Preview again after changing the list. The list shows
 all affected pairs, their match score, current kerning, and proposed kerning.
 **Open before / after proof** creates a disposable font copy showing the first
 16 matches: before on the left, after on the right, in list order. The source
@@ -191,15 +194,22 @@ is unchanged until **Apply rule**. Preview again after changing the font or any
 settings. The panel remains bound to the source master, including while viewing
 the proof; changing the source's selected master requires reopening the panel.
 
-Similarity compares sampled facing silhouettes at shared vertical positions,
-normalized by x-height. Letter names do not determine similarity. A high threshold
+New lessons compare facing contours in the shared vertical region, normalized
+by x-height and measured in an upright frame for italic outlines. Modest local
+terminal offsets and a one-sample vertical displacement are tolerated; large
+overhang differences and different numbers of detached vertical ink bands are
+treated conservatively. Saved older lessons retain their original matching. Letter names do not determine similarity. A high threshold
 is intentionally conservative; an unusual pair may have no close matches.
 Closer matches receive more of the adjustment. The closest applicable rule wins
 when examples overlap, so their effects do not accumulate. Match percentages
 are geometric scores, not probabilities or a promise of optical equivalence.
 
 Rules are saved per master in the font metadata and recompute against current
-outlines during automatic updates. Their reference shape is the approved example
+outlines during automatic updates. New rules are restricted to the concrete
+pairs shown in the approved preview. Adding a glyph or changing an outline
+cannot silently enroll another pair; preview a new rule to include it. Previous
+approved pairs are protected from later lessons, even if they temporarily stop
+matching after an outline edit. Removing a rule releases its own approval. Their reference shape is the approved example
 at creation time. Existing authored glyph/mixed/class pairs and manual pins are
 excluded. Collision and punctuation guards still apply to learned tightening.
 Ordinary spacing and model output are unchanged when there are no rules.
@@ -215,3 +225,10 @@ non-stacking, inherited/class/manual ownership, cumulative edits, persistence,
 independent rule undo, live geometry and engine collision protection. Native
 preview/application/proof, stale-preview rejection, Undo/Redo, save/reload and
 removal checks are recorded in `similar-pairs-validation.json`.
+
+The preview contract and geometry changes are covered by synthetic outline,
+legacy-rule, exclusion, approval-scope, stale-preview and undo tests. The revised
+panel and before/after proof were also checked in Glyphs 3 using a disposable
+font. Native apply, exclusions, prior approvals, Undo/Redo, save/reload, rule
+removal and source preservation passed; results are recorded in
+`similar-review-validation.json`.

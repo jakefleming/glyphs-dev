@@ -7,7 +7,7 @@ from AppKit import (NSMenu, NSMenuItem, NSEvent, NSWindow, NSPanel, NSApplicatio
                     NSSlider, NSPopUpButton, NSScrollView, NSTextView, NSFont, NSAlert, NSBackingStoreBuffered)
 from GlyphsApp import Glyphs, GSInstance, EDIT_MENU, UPDATEINTERFACE, Message
 from spacing_state import initial_state, detect_adjustments, update_pair_ownership, effective_authored, remember_baseline, observe_changes, adopt_spacing, remember_observation, compact_snapshot
-from similar_pairs import profiles, descriptor, similarity, effective_value, adjustments
+from similar_pairs import profiles, descriptor, similarity, effective_value, adjustments, parse_exclusions, reviewed_pairs
 from undo_state import state_delta, restore_state, pair_delta, metric_delta
 
 KEY = 'com.flemingfoundry.graverSpacing.v1'
@@ -708,7 +708,7 @@ class RigormortiseControllerV28(NSObject):
         if len(names)!=2:raise ValueError('Enter two glyph names separated by a space, for example: r y')
         delta=float(str(self.deltaField.stringValue()))
         if not math.isfinite(delta):raise ValueError('Adjustment must be a finite number.')
-        return names,delta,round(self.similaritySlider.doubleValue()/100,3),round(self.strengthSlider.doubleValue()/100,3)
+        return names,delta,round(self.similaritySlider.doubleValue()/100,3),round(self.strengthSlider.doubleValue()/100,3),str(self.skipPairsField.stringValue()).strip()
 
     @objc.python_method
     def similarEngine(self,snap,state):
@@ -727,7 +727,7 @@ class RigormortiseControllerV28(NSObject):
     def usePairEdit_(self,sender):
         try:
             font,s=self.similarSource();snap=snapshot(font,s['master']);state=copy.deepcopy(s['state']);observe_changes(state,snap)
-            names,_,_,_=self.similarConfig();key='\t'.join(names)
+            names,_,_,_,_=self.similarConfig();key='\t'.join(names)
             example=state.get('pairExamples',{}).get(key)
             if example is None:raise ValueError('No recorded edit for that pair yet. Adjust its kerning with Auto on, or enter the adjustment in units.')
             self.deltaField.setStringValue_('%g'%example['delta']);self.similarDraft=None;self.similarApply.setEnabled_(False)
@@ -738,13 +738,14 @@ class RigormortiseControllerV28(NSObject):
             font,s=self.similarSource()
             if self.pending or s.get('force'):raise ValueError('Wait for the current spacing calculation to finish, then preview again.')
             if not s['state']['enabled']:raise ValueError('Enable Auto on the source master first, then preview again.')
-            names,delta,threshold,strength=self.similarConfig();snap=snapshot(font,s['master']);h=max(snap['xHeight'],1)
+            names,delta,threshold,strength,skip=self.similarConfig();snap=snapshot(font,s['master']);h=max(snap['xHeight'],1)
             if not 0<abs(delta)<=h:raise ValueError('Enter a nonzero adjustment no larger than the x-height.')
             if any(n not in snap['glyphs'] for n in names):raise ValueError('Both names must be eligible outlined glyphs in this master.')
             state=copy.deepcopy(s['state']);observe_changes(state,snap);remember_observation(state,snap)
             profile=profiles(snap)
+            excluded=set(parse_exclusions(skip,snap['glyphs']))|reviewed_pairs(snap,state)
             rule=dict(id=uuid.uuid4().hex,source=names,deltaEm=delta/h,threshold=threshold,strength=strength,
-                      descriptor=descriptor(profile[names[0]],profile[names[1]]))
+                      descriptor=descriptor(profile[names[0]],profile[names[1]]),excludedPairs=sorted(excluded))
             oldResult=self.similarEngine(snap,state)
             state.setdefault('similarRules',{})[rule['id']]=rule
             result=self.similarEngine(snap,state);rows=[]
@@ -754,12 +755,15 @@ class RigormortiseControllerV28(NSObject):
                 a,b=key.split('\t');score=similarity(descriptor(profile[a],profile[b]),rule['descriptor'])
                 rows.append(dict(key=key,before=effective_value(a,b,snap['pairs'],snap['groups']),after=new,score=score))
             rows.sort(key=lambda r:(-r['score'],r['key']))
+            # Only the concrete reviewed changes are authorized by Apply.
+            rule['approvedPairs']=[r['key'] for r in rows]
+            result=self.similarEngine(snap,state)
             self.similarDraft=dict(font=font,master=s['master'],signature=fingerprint(snap),expected=copy.deepcopy(s['state']),
                                    state=state,result=result,rows=rows,config=self.similarConfig())
-            lines=['%d pairs affected. Existing authored pairs and pins are excluded.'%len(rows),
+            lines=['%d pairs proposed. Manual pairs, pins, skipped pairs and prior approvals are protected.'%len(rows),
                    '%-24s %6s %8s   %8s'%('Pair','Match','Current','Proposed'),'']
             lines += ['%-24s %5d%% %8g → %8g'%(r['key'].replace('\t',' / '),round(r['score']*100),r['before'],r['after']) for r in rows]
-            if not rows:lines+=['No unprotected matches change at these settings. Lower similarity, or choose another example.']
+            if not rows:lines+=['No strong, unprotected matches change at these settings. Choose another example or review the threshold.']
             self.similarText.setString_('\n'.join(lines));self.similarApply.setEnabled_(bool(rows))
         except Exception as e:
             self.similarDraft=None;self.similarApply.setEnabled_(False);self.similarText.setString_(str(e))
@@ -778,7 +782,7 @@ class RigormortiseControllerV28(NSObject):
             font,s,snap,draft=self.checkedSimilarDraft()
             self.apply(font,snap,draft['result'],copy.deepcopy(draft['state']))
             self.similarDraft=None;self.similarApply.setEnabled_(False);self.refreshSimilarRules()
-            self.similarText.setString_('Applied to %d pairs. The rule follows later outline edits. Undo or remove the rule to reverse it.'%len(draft['rows']))
+            self.similarText.setString_('Applied to %d reviewed pairs. New matches require a new preview. Undo or remove the rule to reverse it.'%len(draft['rows']))
             font.show()
         except Exception as e:self.similarText.setString_(str(e))
 
@@ -850,14 +854,16 @@ class RigormortiseControllerV28(NSObject):
             label('Example pair (glyph names)',18,586,260);label('Your adjustment (units)',300,586,220)
             self.pairField=field('r y',18,558,260);self.deltaField=field('0',300,558,90)
             button('Use recorded edit','usePairEdit:',400,555,220)
-            self.similarityLabel=label('Similarity: 80%',18,520,280);self.strengthLabel=label('Strength: 100%',330,520,280)
-            for name,x,value,low,high in [('similaritySlider',18,80,50,99),('strengthSlider',330,100,0,100)]:
+            self.similarityLabel=label('Similarity: 90%',18,520,280);self.strengthLabel=label('Strength: 100%',330,520,280)
+            for name,x,value,low,high in [('similaritySlider',18,90,80,99),('strengthSlider',330,100,0,100)]:
                 slider=NSSlider.alloc().initWithFrame_(NSMakeRect(x,492,285,24));slider.setMinValue_(low);slider.setMaxValue_(high);slider.setDoubleValue_(value)
                 slider.setTarget_(self);slider.setAction_('similarSettings:');slider.setContinuous_(False);view.addSubview_(slider);setattr(self,name,slider)
             button('Preview matches','previewSimilar:',14,451,190);button('Open before / after proof','proofSimilar:',210,451,240)
             self.similarApply=button('Apply rule','applySimilar:',460,451,165)
-            scroll=NSScrollView.alloc().initWithFrame_(NSMakeRect(18,115,604,325));scroll.setHasVerticalScroller_(True)
-            self.similarText=NSTextView.alloc().initWithFrame_(NSMakeRect(0,0,585,325));self.similarText.setEditable_(False);self.similarText.setFont_(NSFont.userFixedPitchFontOfSize_(12))
+            label('Skip pairs (glyph names, separated by commas)',18,416,600)
+            self.skipPairsField=field('',18,388,604)
+            scroll=NSScrollView.alloc().initWithFrame_(NSMakeRect(18,115,604,260));scroll.setHasVerticalScroller_(True)
+            self.similarText=NSTextView.alloc().initWithFrame_(NSMakeRect(0,0,585,260));self.similarText.setEditable_(False);self.similarText.setFont_(NSFont.userFixedPitchFontOfSize_(12))
             self.similarText.setVerticallyResizable_(True);self.similarText.setAutoresizingMask_(2);scroll.setDocumentView_(self.similarText);view.addSubview_(scroll)
             label('Saved rules for this master',18,80,600)
             self.rulesPopup=NSPopUpButton.alloc().initWithFrame_pullsDown_(NSMakeRect(18,42,430,28),False);view.addSubview_(self.rulesPopup)
@@ -865,8 +871,8 @@ class RigormortiseControllerV28(NSObject):
         self.similarTitle.setStringValue_(font.familyName+' / '+selected_master(font).name)
         names=[l.parent.name for l in font.selectedLayers if l.layerId==selected_master(font).id]
         if len(names)==2:self.pairField.setStringValue_(' '.join(names))
-        self.deltaField.setStringValue_('0');self.similarApply.setEnabled_(False);self.refreshSimilarRules()
-        self.similarText.setString_('Adjust a pair in Glyphs, enter its two glyph names, then Use recorded edit.\nOr enter the change in units yourself: positive loosens, negative tightens.\nPreview before applying. Similarity uses facing contours, not names.\nExisting authored kerning is protected; only automatic/unset pairs can change.')
+        self.skipPairsField.setStringValue_('');self.deltaField.setStringValue_('0');self.similarApply.setEnabled_(False);self.refreshSimilarRules()
+        self.similarText.setString_('Adjust a pair in Glyphs, enter its two glyph names, then Use recorded edit.\nOr enter the change in units yourself: positive loosens, negative tightens.\nPreview before applying. Strong matches use shared contour regions and compatible ink bands.\nManual kerning and previous approvals are protected. Skip any proposed exceptions, then preview again. Only reviewed pairs can change.')
         self.similarWindow.makeKeyAndOrderFront_(None)
 
     def showPanel_(self,sender):
