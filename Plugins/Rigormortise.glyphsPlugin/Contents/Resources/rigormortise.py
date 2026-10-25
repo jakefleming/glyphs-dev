@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """Live Rigormortise spacing adapter. All Glyphs object access stays on the main thread."""
-import os, json, hashlib, time, copy, traceback, subprocess, threading, queue
+import math, uuid, os, json, hashlib, time, copy, traceback, subprocess, threading, queue
 import objc
 from Foundation import NSObject, NSTimer, NSMakeRect, NSNotificationCenter
 from AppKit import (NSMenu, NSMenuItem, NSEvent, NSWindow, NSPanel, NSApplication, NSTextField, NSButton,
-                    NSSlider, NSPopUpButton, NSFont, NSAlert, NSBackingStoreBuffered)
+                    NSSlider, NSPopUpButton, NSScrollView, NSTextView, NSFont, NSAlert, NSBackingStoreBuffered)
 from GlyphsApp import Glyphs, GSInstance, EDIT_MENU, UPDATEINTERFACE, Message
 from spacing_state import initial_state, detect_adjustments, update_pair_ownership, effective_authored, remember_baseline, observe_changes, adopt_spacing, remember_observation, compact_snapshot
+from similar_pairs import profiles, descriptor, similarity, effective_value, adjustments
 from undo_state import state_delta, restore_state, pair_delta, metric_delta
 
 KEY = 'com.flemingfoundry.graverSpacing.v1'
@@ -173,7 +174,7 @@ def request_for(snap, state, changed=None):
                 item[side+'Delta']=o[side]
         glyphs.append(item)
     return dict(glyphs=glyphs,xHeight=snap['xHeight'],capHeight=snap['capHeight'],
-                space=state['space'],slant=snap['slant'],protect=state['protect'],changed=changed,contourPreset=state.get('contourPreset'))
+                space=state['space'],slant=snap['slant'],protect=state['protect'],changed=changed,contourPreset=state.get('contourPreset'),pairAdjustments=adjustments(snap,state))
 
 
 class Engine:
@@ -200,13 +201,13 @@ class Engine:
         if self.process and self.process.poll() is None: self.process.terminate()
 
 
-class RigormortiseUndoRecordV25(NSObject):
+class RigormortiseUndoRecordV28(NSObject):
     pass
 
 
-class RigormortiseControllerV25(NSObject):
+class RigormortiseControllerV28(NSObject):
     def init(self):
-        self=objc.super(RigormortiseControllerV25,self).init()
+        self=objc.super(RigormortiseControllerV28,self).init()
         if self is None: return None
         self.engine=Engine();self.sessions={};self.pending=None;self.serial=0
         self.changedAt=0;self.dirty=True;self.force=False;self.applying=False
@@ -236,6 +237,7 @@ class RigormortiseControllerV25(NSObject):
         try: self.menu.menu().removeItem_(self.menu)
         except Exception: pass
         if self.window: self.window.close()
+        if getattr(self,'similarWindow',None):self.similarWindow.close()
 
     @objc.python_method
     def changed(self, notification):
@@ -345,7 +347,7 @@ class RigormortiseControllerV25(NSObject):
         pairs=pair_delta(before['pairs'],after['pairs'])
         state=state_delta(oldstate,newstate)
         if not (metrics or pairs or state):return
-        record=RigormortiseUndoRecordV25.alloc().init()
+        record=RigormortiseUndoRecordV28.alloc().init()
         record.font=font;record.master=before['master'];record.metrics=metrics;record.pairs=pairs;record.state=state
         record.manager=manager if manager is not None else self.undoManager(font)
         m=record.manager
@@ -667,7 +669,7 @@ class RigormortiseControllerV25(NSObject):
                 a,b=key.split('\t')
                 if (a.startswith('@') or font.glyphs[a]) and (b.startswith('@') or font.glyphs[b]):
                     font.setKerningForPair(s['master'],a,b,value)
-            s['state'].update(enabled=False,overrides={},managedPairs={},pinnedPairs={},adoptPending=True)
+            s['state'].update(enabled=False,overrides={},managedPairs={},pinnedPairs={},similarRules={},pairExamples={},adoptPending=True)
             remember_observation(s['state'],snapshot(font,s['master']));self.persist(s)
         self.withoutNativeUndo(font,restore)
         after=snapshot(font,s['master'])
@@ -692,9 +694,184 @@ class RigormortiseControllerV25(NSObject):
             self.panelFont=key
             if self.active:self.setStatus(('Contour' if s.get('contourPreset') else 'Stock')+' — automatic spacing on' if s['enabled'] else 'Off — current spacing retained')
 
+    @objc.python_method
+    def similarSource(self):
+        font,master=self.similarContext
+        if font not in Glyphs.fonts or selected_master(font).id!=master:
+            raise ValueError('The source font/master changed. Reopen Similar pairs for that master.')
+        return font,self.session(font,master)
+
+    @objc.python_method
+    def similarConfig(self):
+        names=str(self.pairField.stringValue()).strip().split()
+        if len(names)==1 and len(names[0])==2:names=list(names[0])
+        if len(names)!=2:raise ValueError('Enter two glyph names separated by a space, for example: r y')
+        delta=float(str(self.deltaField.stringValue()))
+        if not math.isfinite(delta):raise ValueError('Adjustment must be a finite number.')
+        return names,delta,round(self.similaritySlider.doubleValue()/100,3),round(self.strengthSlider.doubleValue()/100,3)
+
+    @objc.python_method
+    def similarEngine(self,snap,state):
+        process=subprocess.run([os.path.join(RESOURCE,'rigormortise-engine')],input=json.dumps(request_for(snap,state))+'\n',
+                               capture_output=True,text=True,timeout=15)
+        if process.returncode:raise ValueError('Spacing worker failed; no changes applied.')
+        result=json.loads(process.stdout)
+        if 'error' in result:raise ValueError(result['error'])
+        return result
+
+    def similarSettings_(self,sender):
+        self.similarityLabel.setStringValue_('Similarity: %d%%'%self.similaritySlider.doubleValue())
+        self.strengthLabel.setStringValue_('Strength: %d%%'%self.strengthSlider.doubleValue())
+        self.similarDraft=None;self.similarApply.setEnabled_(False)
+
+    def usePairEdit_(self,sender):
+        try:
+            font,s=self.similarSource();snap=snapshot(font,s['master']);state=copy.deepcopy(s['state']);observe_changes(state,snap)
+            names,_,_,_=self.similarConfig();key='\t'.join(names)
+            example=state.get('pairExamples',{}).get(key)
+            if example is None:raise ValueError('No recorded edit for that pair yet. Adjust its kerning with Auto on, or enter the adjustment in units.')
+            self.deltaField.setStringValue_('%g'%example['delta']);self.similarDraft=None;self.similarApply.setEnabled_(False)
+        except Exception as e:self.similarText.setString_(str(e))
+
+    def previewSimilar_(self,sender):
+        try:
+            font,s=self.similarSource()
+            if self.pending or s.get('force'):raise ValueError('Wait for the current spacing calculation to finish, then preview again.')
+            if not s['state']['enabled']:raise ValueError('Enable Auto on the source master first, then preview again.')
+            names,delta,threshold,strength=self.similarConfig();snap=snapshot(font,s['master']);h=max(snap['xHeight'],1)
+            if not 0<abs(delta)<=h:raise ValueError('Enter a nonzero adjustment no larger than the x-height.')
+            if any(n not in snap['glyphs'] for n in names):raise ValueError('Both names must be eligible outlined glyphs in this master.')
+            state=copy.deepcopy(s['state']);observe_changes(state,snap);remember_observation(state,snap)
+            profile=profiles(snap)
+            rule=dict(id=uuid.uuid4().hex,source=names,deltaEm=delta/h,threshold=threshold,strength=strength,
+                      descriptor=descriptor(profile[names[0]],profile[names[1]]))
+            oldResult=self.similarEngine(snap,state)
+            state.setdefault('similarRules',{})[rule['id']]=rule
+            result=self.similarEngine(snap,state);rows=[]
+            for key,new in result['pairs'].items():
+                old=oldResult['pairs'].get(key,0)
+                if new==old:continue
+                a,b=key.split('\t');score=similarity(descriptor(profile[a],profile[b]),rule['descriptor'])
+                rows.append(dict(key=key,before=effective_value(a,b,snap['pairs'],snap['groups']),after=new,score=score))
+            rows.sort(key=lambda r:(-r['score'],r['key']))
+            self.similarDraft=dict(font=font,master=s['master'],signature=fingerprint(snap),expected=copy.deepcopy(s['state']),
+                                   state=state,result=result,rows=rows,config=self.similarConfig())
+            lines=['%d pairs affected. Existing authored pairs and pins are excluded.'%len(rows),
+                   '%-24s %6s %8s   %8s'%('Pair','Match','Current','Proposed'),'']
+            lines += ['%-24s %5d%% %8g → %8g'%(r['key'].replace('\t',' / '),round(r['score']*100),r['before'],r['after']) for r in rows]
+            if not rows:lines+=['No unprotected matches change at these settings. Lower similarity, or choose another example.']
+            self.similarText.setString_('\n'.join(lines));self.similarApply.setEnabled_(bool(rows))
+        except Exception as e:
+            self.similarDraft=None;self.similarApply.setEnabled_(False);self.similarText.setString_(str(e))
+
+    @objc.python_method
+    def checkedSimilarDraft(self):
+        font,s=self.similarSource();draft=self.similarDraft
+        if not draft:raise ValueError('Preview the suggested changes first.')
+        snap=snapshot(font,s['master'])
+        if self.pending or fingerprint(snap)!=draft['signature'] or s['state']!=draft['expected'] or self.similarConfig()!=draft['config']:
+            raise ValueError('The font or settings changed. Preview again before applying.')
+        return font,s,snap,draft
+
+    def applySimilar_(self,sender):
+        try:
+            font,s,snap,draft=self.checkedSimilarDraft()
+            self.apply(font,snap,draft['result'],copy.deepcopy(draft['state']))
+            self.similarDraft=None;self.similarApply.setEnabled_(False);self.refreshSimilarRules()
+            self.similarText.setString_('Applied to %d pairs. The rule follows later outline edits. Undo or remove the rule to reverse it.'%len(draft['rows']))
+            font.show()
+        except Exception as e:self.similarText.setString_(str(e))
+
+    def proofSimilar_(self,sender):
+        try:
+            font,s,snap,draft=self.checkedSimilarDraft()
+            if not draft['rows']:raise ValueError('No matches to show.')
+            proof=font.copy();proof.familyName=font.familyName+' Similar Pairs Proof'
+            proof.features=[];proof.classes=[];proof.featurePrefixes=[]
+            # Preview metadata cannot activate this or another live spacing tool.
+            for key in list(proof.userData.keys()):del proof.userData[key]
+            for master in proof.masters:
+                for key in list(master.userData.keys()):del master.userData[key]
+            lines=[]
+            for index,row in enumerate(draft['rows'][:16]):
+                a,b=row['key'].split('\t');aliases=[]
+                for mode in ('before','after'):
+                    pair=[]
+                    for side,name in enumerate((a,b)):
+                        g=font.glyphs[name].copy();g.name='rmproof.%d.%s.%d'%(index,mode,side);g.unicode=None
+                        g.leftKerningGroup=None;g.rightKerningGroup=None;proof.glyphs.append(g);pair.append(g.name)
+                    proof.setKerningForPair(s['master'],pair[0],pair[1],row[mode]);aliases.append('/'+'/'.join(pair))
+                lines.append(aliases[0]+' /space/space '+aliases[1])
+            Glyphs.fonts.append(proof);proof.masterIndex=next(i for i,m in enumerate(proof.masters) if m.id==s['master'])
+            proof.newTab('\n'.join(lines));proof.show()
+            proof.currentTab.scale=.10
+            self.similarText.setString_('Proof: BEFORE on the left, AFTER on the right. First %d matches, in preview order.\n\n'%min(16,len(draft['rows']))+str(self.similarText.string()))
+        except Exception as e:self.similarText.setString_(str(e))
+
+    @objc.python_method
+    def refreshSimilarRules(self):
+        font,s=self.similarSource();self.ruleIDs=list(s['state'].get('similarRules',{}))
+        self.rulesPopup.removeAllItems()
+        for key in self.ruleIDs:
+            r=s['state']['similarRules'][key]
+            self.rulesPopup.addItemWithTitle_('%s: %+g units, %d%% strength'%(' / '.join(r['source']),r['deltaEm']*selected_master(font).xHeight,r['strength']*100))
+        if not self.ruleIDs:self.rulesPopup.addItemWithTitle_('No saved rules')
+
+    def removeSimilar_(self,sender):
+        try:
+            font,s=self.similarSource()
+            if self.pending:raise ValueError('Wait for the spacing calculation to finish.')
+            i=self.rulesPopup.indexOfSelectedItem()
+            if i<0 or i>=len(self.ruleIDs):return
+            if not s['state']['enabled']:raise ValueError('Enable Auto before removing a rule so its result can be recalculated.')
+            snap=snapshot(font,s['master']);state=copy.deepcopy(s['state']);observe_changes(state,snap)
+            del state['similarRules'][self.ruleIDs[i]]
+            result=self.similarEngine(snap,state);self.apply(font,snap,result,state)
+            self.similarDraft=None;self.similarApply.setEnabled_(False);self.refreshSimilarRules()
+            self.similarText.setString_('Rule removed and automatic pairs recalculated. Manual overrides were retained. Undo is available.')
+        except Exception as e:self.similarText.setString_(str(e))
+
+    def showSimilar_(self,sender):
+        font=current_font()
+        if not font:return
+        self.similarContext=(font,selected_master(font).id);self.similarDraft=None
+        if not getattr(self,'similarWindow',None):
+            self.similarWindow=NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0,0,640,660),3,NSBackingStoreBuffered,False)
+            self.similarWindow.setTitle_('Rigormortise — Similar pairs');self.similarWindow.setReleasedWhenClosed_(False);self.similarWindow.center();self.similarWindow.setFloatingPanel_(True)
+            view=self.similarWindow.contentView()
+            def label(text,x,y,w):
+                field=NSTextField.alloc().initWithFrame_(NSMakeRect(x,y,w,24));field.setStringValue_(text)
+                field.setBezeled_(False);field.setDrawsBackground_(False);field.setEditable_(False);view.addSubview_(field);return field
+            def field(text,x,y,w):
+                f=NSTextField.alloc().initWithFrame_(NSMakeRect(x,y,w,24));f.setStringValue_(text);view.addSubview_(f);return f
+            def button(text,action,x,y,w):
+                b=NSButton.alloc().initWithFrame_(NSMakeRect(x,y,w,28));b.setTitle_(text);b.setTarget_(self);b.setAction_(action);b.setBezelStyle_(1);view.addSubview_(b);return b
+            self.similarTitle=label('',18,620,600)
+            label('Example pair (glyph names)',18,586,260);label('Your adjustment (units)',300,586,220)
+            self.pairField=field('r y',18,558,260);self.deltaField=field('0',300,558,90)
+            button('Use recorded edit','usePairEdit:',400,555,220)
+            self.similarityLabel=label('Similarity: 80%',18,520,280);self.strengthLabel=label('Strength: 100%',330,520,280)
+            for name,x,value,low,high in [('similaritySlider',18,80,50,99),('strengthSlider',330,100,0,100)]:
+                slider=NSSlider.alloc().initWithFrame_(NSMakeRect(x,492,285,24));slider.setMinValue_(low);slider.setMaxValue_(high);slider.setDoubleValue_(value)
+                slider.setTarget_(self);slider.setAction_('similarSettings:');slider.setContinuous_(False);view.addSubview_(slider);setattr(self,name,slider)
+            button('Preview matches','previewSimilar:',14,451,190);button('Open before / after proof','proofSimilar:',210,451,240)
+            self.similarApply=button('Apply rule','applySimilar:',460,451,165)
+            scroll=NSScrollView.alloc().initWithFrame_(NSMakeRect(18,115,604,325));scroll.setHasVerticalScroller_(True)
+            self.similarText=NSTextView.alloc().initWithFrame_(NSMakeRect(0,0,585,325));self.similarText.setEditable_(False);self.similarText.setFont_(NSFont.userFixedPitchFontOfSize_(12))
+            self.similarText.setVerticallyResizable_(True);self.similarText.setAutoresizingMask_(2);scroll.setDocumentView_(self.similarText);view.addSubview_(scroll)
+            label('Saved rules for this master',18,80,600)
+            self.rulesPopup=NSPopUpButton.alloc().initWithFrame_pullsDown_(NSMakeRect(18,42,430,28),False);view.addSubview_(self.rulesPopup)
+            button('Remove rule','removeSimilar:',455,42,170)
+        self.similarTitle.setStringValue_(font.familyName+' / '+selected_master(font).name)
+        names=[l.parent.name for l in font.selectedLayers if l.layerId==selected_master(font).id]
+        if len(names)==2:self.pairField.setStringValue_(' '.join(names))
+        self.deltaField.setStringValue_('0');self.similarApply.setEnabled_(False);self.refreshSimilarRules()
+        self.similarText.setString_('Adjust a pair in Glyphs, enter its two glyph names, then Use recorded edit.\nOr enter the change in units yourself: positive loosens, negative tightens.\nPreview before applying. Similarity uses facing contours, not names.\nExisting authored kerning is protected; only automatic/unset pairs can change.')
+        self.similarWindow.makeKeyAndOrderFront_(None)
+
     def showPanel_(self,sender):
         if not self.window:
-            self.window=NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0,0,460,585),3,NSBackingStoreBuffered,False)
+            self.window=NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0,0,460,620),3,NSBackingStoreBuffered,False)
             self.window.setTitle_('Rigormortise');self.window.setReleasedWhenClosed_(False);self.window.center()
             self.window.setFloatingPanel_(True);self.window.setLevel_(3)
             view=self.window.contentView()
@@ -727,8 +904,9 @@ class RigormortiseControllerV25(NSObject):
             button('View Stock','showStock:',16,58,138);button('View Contour','showContour:',158,58,142);button('Back to source','showSource:',304,58,140)
             self.statusLabel=label(self.status,20,9,420,38);self.statusLabel.setFont_(NSFont.systemFontOfSize_(11))
             for item in list(view.subviews()):
-                frame=item.frame();frame.origin.y+=50;item.setFrame_(frame)
+                frame=item.frame();frame.origin.y+=85;item.setFrame_(frame)
+            button('Apply to similar pairs…','showSimilar:',16,44,428)
             button('Restore starting spacing + kerning','restoreBaseline:',16,9,428)
         self.refreshPanel();self.window.makeKeyAndOrderFront_(None)
 
-RigormortiseController = RigormortiseControllerV25
+RigormortiseController = RigormortiseControllerV28

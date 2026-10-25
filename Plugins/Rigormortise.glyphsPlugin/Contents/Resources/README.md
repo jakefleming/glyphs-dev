@@ -40,6 +40,7 @@ python3 build_engine.py
 python3 test_master_state.py
 python3 test_state.py
 python3 test_baseline.py
+python3 test_similar_pairs.py
 python3 test_undo_state.py
 python3 test_metrics.py
 python3 test_engine.py
@@ -171,3 +172,46 @@ values overwritten before this feature cannot be recovered automatically. The
 optional Stock/Contour comparison still deliberately calculates new spacing in its
 copies. Native capture, off/on, save/reopen, restore and Undo/Redo checks are recorded
 in `baseline-validation.json`.
+
+
+## Apply to similar pairs
+
+With Auto enabled, adjust a pair's kerning in Glyphs. Open **Apply to similar
+pairs…** in the Rigormortise panel. Enter its two glyph names (for example,
+`n n`) and click **Use recorded edit**. Repeated nudges retain the total change
+from the first observed value; a new exception measures against inherited class
+kerning. You can also enter the intended change in units: positive loosens,
+negative tightens. The example pair itself remains your manual override.
+
+Choose **Similarity** and **Strength**, then **Preview matches**. The list shows
+all affected pairs, their match score, current kerning, and proposed kerning.
+**Open before / after proof** creates a disposable font copy showing the first
+16 matches: before on the left, after on the right, in list order. The source
+is unchanged until **Apply rule**. Preview again after changing the font or any
+settings. The panel remains bound to the source master, including while viewing
+the proof; changing the source's selected master requires reopening the panel.
+
+Similarity compares sampled facing silhouettes at shared vertical positions,
+normalized by x-height. Letter names do not determine similarity. A high threshold
+is intentionally conservative; an unusual pair may have no close matches.
+Closer matches receive more of the adjustment. The closest applicable rule wins
+when examples overlap, so their effects do not accumulate. Match percentages
+are geometric scores, not probabilities or a promise of optical equivalence.
+
+Rules are saved per master in the font metadata and recompute against current
+outlines during automatic updates. Their reference shape is the approved example
+at creation time. Existing authored glyph/mixed/class pairs and manual pins are
+excluded. Collision and punctuation guards still apply to learned tightening.
+Ordinary spacing and model output are unchanged when there are no rules.
+
+Select any saved rule and **Remove rule** to recalculate without it; manual
+pair overrides remain protected. Applying/removing rules supports native Undo/Redo.
+Save the font to retain rules across reopening. **Restore starting spacing +
+kerning** also clears learned rules. This first version learns only from explicitly
+approved examples; it does not infer a broad preference from every edit.
+
+`test_similar_pairs.py` covers geometry matching, renamed glyphs, strength,
+non-stacking, inherited/class/manual ownership, cumulative edits, persistence,
+independent rule undo, live geometry and engine collision protection. Native
+preview/application/proof, stale-preview rejection, Undo/Redo, save/reload and
+removal checks are recorded in `similar-pairs-validation.json`.

@@ -71,5 +71,10 @@
     "date": "2026-10-25",
     "passed": true,
     "report": "Plugins/Rigormortise/baseline-validation.json"
+  },
+  "similarPairs": {
+    "date": "2026-10-25",
+    "passed": true,
+    "report": "Plugins/Rigormortise/similar-pairs-validation.json"
   }
 }

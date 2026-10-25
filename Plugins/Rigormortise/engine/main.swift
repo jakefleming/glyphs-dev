@@ -11,6 +11,7 @@ struct Request: Decodable {
     var space: Double; var slant: Double; var protect: Bool
     var changed: [String]?
     var contourPreset: String?
+    var pairAdjustments: [String:Double]?
 }
 struct ResultGlyph: Encodable { var left: Double; var right: Double; var width: Double }
 struct Reply: Encodable { var metrics: [String:ResultGlyph]; var pairs: [String:Double]; var elapsedMS: Double }
@@ -76,6 +77,11 @@ func run(_ r: Request) throws -> Reply {
                 pairs[a.name+"\t"+b.name]=ContourSpacing.protect(preferred,ap,am,bp,bm,settings)
             } else {
                 pairs[a.name+"\t"+b.name]=BodySpacing.kern(ap,am,bp,bm,settings:settings,context:context)
+            }
+            let key=a.name+"\t"+b.name
+            if let delta=r.pairAdjustments?[key], delta != 0 {
+                guard delta.isFinite && abs(delta)<=r.xHeight else { throw NSError(domain:"Invalid pair adjustment",code:4) }
+                pairs[key]=ContourSpacing.protect(pairs[key]!+delta,ap,am,bp,bm,settings)
             }
         }
     }

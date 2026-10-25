@@ -5,7 +5,7 @@ MISSING = {'__graver_absent__': True}
 def flatten(state):
     result={}
     for key,value in state.items():
-        if key in ('overrides','managedPairs','pinnedPairs'):
+        if key in ('overrides','managedPairs','pinnedPairs','similarRules','pairExamples'):
             for name,item in value.items():
                 result[(key,name)]=copy.deepcopy(item)
         else:result[(key,)]=copy.deepcopy(value)

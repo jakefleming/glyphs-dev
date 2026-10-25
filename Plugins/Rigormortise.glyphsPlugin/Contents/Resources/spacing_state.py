@@ -56,7 +56,7 @@ def compact_snapshot(snap):
     return dict(master=snap['master'],
                 glyphs={name:{key:g[key] for key in ('shape','left','right','width')}
                         for name,g in snap['glyphs'].items()},
-                pairs=copy.deepcopy(snap['pairs']))
+                pairs=copy.deepcopy(snap['pairs']),groups=copy.deepcopy(snap.get('groups',{})))
 
 
 def remember_baseline(state,snap):
@@ -75,6 +75,13 @@ def observe_changes(state,snap):
         before=previous['pairs'];after=snap['pairs']
         for key in set(before)|set(after):
             if before.get(key)!=after.get(key):
+                a,b=key.split('\t')
+                oldValue=effective_authored(a,b,before,{},previous.get('groups',snap.get('groups',{})))
+                newValue=effective_authored(a,b,after,{},snap.get('groups',{}))
+                examples=state.setdefault('pairExamples',{})
+                start=examples.get(key,{}).get('before',0 if oldValue is None else oldValue)
+                end=0 if newValue is None else newValue
+                examples[key]={'before':start,'after':end,'delta':end-start}
                 state['pinnedPairs'][key]=after.get(key,0)
                 state['managedPairs'].pop(key,None)
     update_pair_ownership(state,snap['pairs'])

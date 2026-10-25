@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-25",
+  "passed": true,
+  "native": {
+    "recordedDelta": true,
+    "previewNoMutation": true,
+    "hasGeometryMatches": true,
+    "sourceAndAuthoredExcluded": true,
+    "proofCreated": true,
+    "stalePreviewRejected": true,
+    "ruleSaved": true,
+    "manualPairsRetained": true,
+    "appliedPreview": true,
+    "undoExact": true,
+    "redoExact": true,
+    "savedRuleReloads": true,
+    "ruleRemoved": true,
+    "removalRestoresAutomatic": true,
+    "sourceUnchanged": true,
+    "allPassed": true
+  },
+  "similarPairTests": 12
+}
