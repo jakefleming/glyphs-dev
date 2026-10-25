@@ -1,41 +1,209 @@
-# Rigormortise for Glyphs — 0.1 prototype
+# Rigormortise for Glyphs
 
-**Experimental, opt-in version.** Final native Undo/Redo checks, including fractional sidebearings, and OTF export passed. The revised adapter passed native Glyphs 3.4.1 UI Undo/Redo checks for manual sidebearings and contour edits, exact snapshot comparisons, override persistence, and OTF export on a Saddleshoe copy. The original font remains off. See `validation.json` for the recorded checks. This is not yet a promise that every Glyphs workflow or font is supported.
+Rigormortise updates spacing and kerning as you draw. Change an outline, pause,
+and it recalculates the affected spacing. You can correct the result, pin a
+sidebearing, or use a pair you've adjusted as an example for similar pairs.
 
-A local, always-on spacing adapter for Glyphs 3.4.1. Open **Edit → Rigormortise…**, then enable it for the current master. Its settings and ownership records live in the `.glyphs` document. Each master is off until explicitly enabled. Settings and ownership are independent per master.
+It works in your open Glyphs document. The result is ordinary sidebearings and
+kerning, so you can turn the plugin off and carry on editing or export the font.
+Settings are saved in the `.glyphs` file, separately for each master.
 
-## Controls
+This is version 0.1, tested in Glyphs 3.4.1. Try it on a copy first. The bundled
+Contour presets were developed for Saddleshoe; their results on other fonts,
+particularly italic punctuation, still need work.
 
-- Target space controls the overall rhythm. Sidebearings and affected pairs follow outline changes after a short idle period.
-- Enabling Auto remembers the current spacing and kerning for that master. Initial sidebearings become adjustments relative to the automatic result, so later outline changes can still adapt.
-- A manual sidebearing change becomes an adjustment relative to the automatic result.
-- Pin selected spacing retains exact left/right bearings. Return selected to Auto clears those sidebearing overrides.
-- Manually entered or deleted kerning is retained as an override; existing glyph, mixed, and class kerning is respected.
-- Turning Auto off freezes the current ordinary Glyphs metrics/kerning. It does not remove the generated result.
-- Automatic changes create a separate **Rigormortise** Undo step. Press Undo once for the automatic adjustment and again for the underlying edit. Redo reverses those steps. After Undo, Auto waits for the next edit instead of immediately reapplying the change.
-- Undo patches are limited to changed metrics, pairs, and ownership fields. They skip fields edited later, preventing an older glyph's undo history from overwriting unrelated work.
+## Installation
 
-The current result is written as normal Glyphs spacing and kerning and exported by Glyphs. Wait until the status returns to Auto on before saving/exporting immediately after an edit; this prototype does not intercept an export started during a pending calculation.
-
-## Scope
-
-Single- and multi-master Latin fonts, numbers, and punctuation. Only the enabled, selected master is monitored for edits; pending results remain bound to their originating master. Switching masters changes the panel and does not enable the other master. Non-Latin letters, combining marks, spaces, empty/open outlines, and non-exporting glyphs are excluded. Composite glyphs, hinted glyphs, and metrics-linked sides retain their metrics. Components are decomposed only for measurement, never in the font. Component and accented inheritance beyond existing Glyphs metric links is not a complete port of Graver's document model.
-
-Existing kerning groups are honored. Generated kerning is individual pairs, not inferred classes; a dense pair table can result. Intentional overlaps can be authored as pair overrides or by disabling collision protection.
-
-Automatic translations use the unrounded native node API and preserve node types, smoothness, handles, and vertical coordinates. The user's grid settings are not changed. No outlines are redrawn or simplified. A manual use of Glyphs' own sidebearing field may still apply Glyphs' native rounding.
-
-## Engine
-
-`build_engine.py` compiles the checked-in `engine/*.swift` files into the sibling `../Rigormortise.glyphsPlugin` bundle. It requires Apple's Swift command-line tools on macOS; it does not depend on a particular home directory or read the Graver checkout during normal builds. The bundled worker is currently Apple Silicon (arm64); rebuilding targets the current machine.
-
-The vendored sources were extracted from `~/Development/proto-type/Sources/ProtoType`: full `BodySpacing.swift`, the profile/italic/metric portion of `Spacing.swift`, the bounded portion of `RenderCache.swift`, and cubic evaluation utilities from `CurveFit.swift`. `engine/Models.swift` and `engine/main.swift` adapt the input and newline-JSON protocol. `source-manifest.json` records the original full source-file SHA-256 hashes; `launcher-provenance.json` records the official Glyphs SDK loader URL and checksum. Updating these source slices is an explicit maintenance step, separate from building.
-
-The worker is a persistent local Swift process. It caches outline profiles, computes affected pairs, and never accesses live Glyphs objects. The Python adapter reads and writes Glyphs on the main thread, debounces updates, checks document/outline/state freshness before applying, and does not run during mouse drags. No network or external services are used by the running plug-in.
-
-## Build and tests
+Install [`Rigormortise.glyphsPlugin`](../Rigormortise.glyphsPlugin) in:
 
 ```
+~/Library/Application Support/Glyphs 3/Plugins/
+```
+
+Restart Glyphs, then open **Edit → Rigormortise…**. The bundled engine runs on
+Apple Silicon. To build it for another Mac, see [Development](#development).
+
+If you have the old **Graver Spacing** bundle installed, remove it to avoid
+getting two menus. Rigormortise still reads its saved settings.
+
+## Start with your existing spacing
+
+Select a master and enable **Automatic spacing on this master**. Each master
+starts with Auto off. Enabling one does not enable the others.
+
+On first activation, Rigormortise remembers that master's spacing and complete
+kerning table. Your current sidebearings become offsets from its calculated
+values. This lets the spacing follow later outline changes while retaining your
+adjustments. Existing kerning, including class pairs and explicit zero values,
+is preserved. Auto fills pairs which have no authored value.
+
+**Target space** controls the overall spacing. **Use Contour spacing** adds a
+contour-based correction to the stock calculation, using the selected preset.
+The Regular and Wide Black presets are calibrated for Saddleshoe. They aren't
+general-purpose presets for every typeface or units-per-em value.
+
+Only the selected master is monitored. If you switch masters during a
+calculation, its result still belongs to the master that started it. The panel
+shows the settings for your new selection.
+
+Turn off any other live spacing tool working on the same document.
+
+## Make corrections
+
+A manual sidebearing edit becomes an offset from the automatic result. For an
+exact value that must stay put, use **Pin selected spacing**. **Return selected
+to Auto** clears these sidebearing adjustments and pins for the selected glyphs.
+
+Manual kerning edits and deletions are remembered too. This includes changes
+made while Auto is off: Rigormortise picks them up when you enable it again.
+Save the font to keep these records across sessions.
+
+If you want to replace the existing kerning, use **Replace existing kerning on
+this master**. It enables Auto and recalculates that master's pairs. It keeps
+explicit Rigormortise pins, but replaces other glyph, mixed and class kerning.
+There is no reliable way to tell whether an existing pair was set by hand or by
+another tool, so this command replaces both. It can be undone.
+
+Turning Auto off leaves the current spacing in place. It does not restore the
+spacing you started with.
+
+## Apply an adjustment to similar pairs
+
+Suppose you tighten a pair and want to try the same adjustment elsewhere:
+
+1. With Auto on, adjust the pair in Glyphs.
+2. Open **Apply to similar pairs…** and enter the two glyph names, such as `n n`.
+3. Click **Use recorded edit**. Alternatively, enter a change in units yourself:
+   positive opens the space, negative closes it.
+4. Click **Preview matches**. The list shows each proposed pair, its similarity
+   score, and its current and proposed kerning.
+5. Put any exceptions in **Skip pairs**, for example `i period, j period`, then
+   preview again.
+6. Check the result and click **Apply rule**.
+
+**Similarity** defaults to 90%. Raise it to require a closer match.
+**Strength** controls how much of your adjustment to transfer. Closer matches
+receive more of the adjustment. The score measures contour similarity; 90%
+doesn't mean a 90% chance that the spacing looks right.
+
+**Open before / after proof** makes a temporary font showing the first 16
+matches, in list order. Before is on the left; after is on the right. You can
+inspect this without changing the source. The panel stays attached to the source
+master while you view the proof. Reopen it to work on a different master.
+
+Matching uses the facing outlines, not glyph names. It compares the vertical
+region where both glyphs have ink, relative to the x-height, and compensates for
+italic slant. Small differences in terminal position are allowed. Large
+overhangs or different arrangements of detached marks make a match less likely.
+Some examples won't produce any useful matches.
+
+The example pair stays a manual override. Repeated nudges are recorded as a
+total change from the first observed value; an exception to class kerning is
+measured from the inherited value.
+
+Applying a rule saves the example's shape and the list of pairs you reviewed.
+The adjustment is recalculated as their outlines change, but new pairs cannot
+join that list without another preview. Manual kerning, pins and pairs approved
+by earlier rules are excluded. Where rules overlap, the closest match wins;
+adjustments aren't added together. Collision and punctuation checks still apply
+to tightening.
+
+Change the font or the settings after previewing, and you'll need to preview
+again before applying. **Remove rule** recalculates the spacing without that
+rule and makes its pairs available to later rules. Manual overrides remain.
+Both applying and removing rules support Undo/Redo. Older saved rules retain
+their original matching behaviour.
+
+## Undo and restore
+
+Automatic changes get their own **Rigormortise** Undo step. Undo once to reverse
+the spacing calculation, then again to reverse the outline or metric edit that
+caused it. Auto waits for another edit before recalculating, so it doesn't
+immediately undo your Undo.
+
+**Restore starting spacing + kerning** returns to the values saved on first
+activation, clears Rigormortise overrides and similar-pair rules, and turns Auto
+off. This is also undoable. The saved starting values remain available.
+
+Restoring spacing doesn't restore outlines. Current metrics links are respected,
+deleted glyphs are skipped, and exact starting widths can be restored when the
+shapes are unchanged. Re-enabling Auto doesn't overwrite the original saved
+values. New eligible glyphs receive automatic spacing.
+
+For documents used before the starting-spacing feature existed, the plugin
+records the values it finds on the next activation or update. It cannot recover
+values which were already overwritten.
+
+## Compare Stock and Contour
+
+**Create Stock + Contour preview** makes two single-master copies for comparison.
+The source document is left alone. Use **View Stock**, **View Contour** and
+**Back to source** to move between them. Save a preview with Save As if you want
+to keep it. After restarting Glyphs, open the saved files normally; the navigation
+buttons refer only to the comparison made in the current session.
+
+These copies calculate fresh spacing. Existing kerning is replaced except for
+Rigormortise pair pins. Rigormortise sidebearing adjustments and pins, metrics
+links, and component locks are retained. Other extension metadata is removed
+from the copies to keep other automation from running there.
+
+All glyphs are copied, including those the spacer doesn't handle. The Contour
+calculation adds a learned correction to stock spacing and then checks clearance
+and punctuation. Some punctuation combinations are still too loose. Comparing
+the modes is useful; neither mode removes the need to look at the result.
+
+## Current limits
+
+The plugin handles Latin letters, numbers and punctuation in single- or
+multi-master fonts. It skips non-Latin letters, combining marks, spaces,
+non-exporting glyphs, and empty or open outlines. Component and hinted glyphs
+keep their metrics, as do sides controlled by metrics keys. Components are
+decomposed for measurement only. Accented-glyph spacing relies on existing
+Glyphs metrics links; there is no additional inheritance system yet.
+
+Existing kerning groups are respected, but generated kerning is stored as
+individual pairs. A large font can therefore acquire a large kerning table.
+Intentional overlaps can be set as manual pair overrides, or you can turn off
+**Prevent collisions**. That check samples outlines; it is not a guarantee
+against every possible collision.
+
+Spacing changes translate outlines without rounding their node coordinates.
+Node types, handles, smoothness and vertical coordinates stay intact. Your grid
+settings aren't changed. Editing a sidebearing through Glyphs' own field may
+still invoke Glyphs' rounding. Rigormortise doesn't redraw paths or make masters
+compatible for interpolation.
+
+Before saving or exporting immediately after an edit, wait for the status to
+return to Auto on. The plugin doesn't delay an export while a calculation is
+pending.
+
+## Development
+
+The runtime bundle is in `Plugins/Rigormortise.glyphsPlugin`. This directory
+contains the Swift sources, build script, tests and fixtures. A development
+installation can symlink the bundle into Glyphs' Plugins directory. Restart
+Glyphs after changing the Python code or rebuilding the engine.
+
+The Python adapter reads and writes Glyphs objects on the main thread. A local
+Swift worker measures outlines and calculates spacing. It stays running and
+caches profiles between requests. The adapter waits for a pause in editing,
+avoids mouse drags, and discards results if the document has changed underneath
+them. The plugin makes no network requests.
+
+The engine sources come from Graver: `BodySpacing.swift`, the spacing and profile
+code in `Spacing.swift`, parts of `RenderCache.swift`, and cubic utilities from
+`CurveFit.swift`. `Models.swift` and `main.swift` provide the worker's data types
+and newline-delimited JSON protocol. `source-manifest.json` records the source
+hashes. Building uses the files in this repository; it doesn't read a separate
+Graver checkout. Updating those source files is a separate maintenance task.
+
+The launcher comes from the [Glyphs SDK](https://github.com/schriftgestalt/GlyphsSDK/tree/Glyphs3/Python%20Templates/General%20Plugin).
+Its checksum is recorded in `launcher-provenance.json`.
+
+Run these commands from this directory. Building requires Apple's Swift
+command-line tools and targets the current machine.
+
+```sh
 python3 build_engine.py
 python3 test_master_state.py
 python3 test_state.py
@@ -45,190 +213,20 @@ python3 test_similar_review.py
 python3 test_undo_state.py
 python3 test_metrics.py
 python3 test_engine.py
+python3 test_contour.py
 ```
 
-Run the commands above from this directory. `test_state.py`, `test_undo_state.py`, and `test_metrics.py` run without Glyphs; `test_engine.py` exercises the bundled worker using the included `engine-request.json` and `live-snapshot.json` Saddleshoe fixtures. Generated `calibrated-request.json` and `engine-result.json` are ignored by Git. Native UI Undo/Redo and export results from the original validation are retained in `validation.json`; historical one-off UI automation scripts and font exports remain in the original chat workspace and are not part of this package.
+The tests run outside Glyphs. Engine tests use the bundled worker and included
+fixtures. Generated request and result files are ignored by Git. The runtime
+includes model coefficients, contour descriptors and a regression fixture;
+private research material is not included.
 
-The plug-in launcher comes from Glyphs' official SDK, `Glyphs3` branch:
-https://github.com/schriftgestalt/GlyphsSDK/tree/Glyphs3/Python%20Templates/General%20Plugin
+Native checks in Glyphs cover Undo/Redo, fractional sidebearings, outline edits,
+export, master switching, saved settings, restoration and similar-pair proofs.
+The results are in `validation.json`, `direct-master-validation.json`,
+`preview-validation.json`, `baseline-validation.json`,
+`similar-pairs-validation.json` and `similar-review-validation.json`.
 
-Install the bundle, then restart Glyphs when convenient. Do not enable this on a production font without retaining a backup.
-
-Installation path: `~/Library/Application Support/Glyphs 3/Plugins/Rigormortise.glyphsPlugin`.
-
-## Repository and development installation
-
-Runtime bundle: `Plugins/Rigormortise.glyphsPlugin`.
-Engine sources, build, tests, and fixtures: `Plugins/Rigormortise/` (this directory).
-
-The installed plugin at `~/Library/Application Support/Glyphs 3/Plugins/Rigormortise.glyphsPlugin` is symlinked to the repository bundle, like the other plugins in this repo. Restart Glyphs after Python or engine changes; an already-running controller/worker can still use the previous code. No restart is required merely to relocate identical files.
-
-Migrated from the Codex workspace `2026-10-20/yo-x20/work/graver-spacing` on 2026-10-24. The runtime bundle was byte-for-byte identical to the installed working version at migration.
-
-## Direct master spacing (2026-10-24)
-
-Open **Edit → Rigormortise…** in your existing document. Select a master,
-choose the matching Saddleshoe calibration, and enable **Automatic spacing on
-this master**. The normal workflow edits that document directly; it creates no
-new files. Use **Use Contour spacing** to switch the reviewed algorithm on/off.
-Each master retains its own calibration, target space, enable state, manual
-sidebearing adjustments, and kerning ownership when the font is saved.
-
-Enabling Auto preserves existing authored kerning. To replace a previous
-kerning result, click **Replace existing kerning on this master**. This enables
-Auto and recalculates kerning on that master, preserving explicit Rigormortise pins.
-It replaces existing glyph, mixed, and class pairs, including unclassified
-pairs from another tool; it cannot infer which of those were hand tuned. The replacement is undoable; keep Auto in preserve mode if those existing
-pairs must stay unchanged. Turn
-off other live kerning tools on the same document before using Rigormortise.
-
-Native validation on a disposable two-master Saddleshoe copy covers master
-isolation, full replacement, manual overrides, undo/redo after switching
-masters, stale-worker rejection, fractional curves, and save/reload. See
-`direct-master-validation.json`. Original single-master settings migrate only
-to the first master; they are never copied onto the second master.
-
-## Optional Contour preview
-
-Open **Edit → Rigormortise…**, choose the Saddleshoe calibration, and click
-**Create Stock + Contour preview**. This copies the selected master into two new,
-independent, single-master documents. The source can have multiple masters; its
-outlines, spacing, kerning and auto-spacing settings are not modified. Use **View
-Stock**, **View Contour**, and **Back to source** to compare. Save either preview
-with Save As if you want to keep working on it.
-
-The Regular preset is the reviewed v3 candidate. The Wide Black preset is the v3
-study counterpart. Calibration is bundled: no manual pair survey, NumPy install,
-or external spacing runtime is needed. These are Saddleshoe calibrations, not universal
-models for unrelated fonts or different units-per-em. No glyph-name or pair-name
-exceptions participate in prediction. Facing contours are measured anew after
-edits. The compiled engine normally takes about 70–90 ms for 81 glyphs on the
-validation Mac, plus the UI's existing idle delay and native application time.
-
-Preview copies replace unpinned reference kerning. Explicit Rigormortise sidebearing
-adjustments/pins, Rigormortise pair pins, and metrics-key/component locks survive.
-Unclassified kerning in a source from another tool remains intact in the source;
-it is not treated as manually pinned in the comparison. Extension user data is
-removed **only from the new copies** to prevent competing automation. Rigormortise
-overrides are explicitly restored afterward. Originals retain all metadata.
-The copies retain every glyph, but marks, separators and unsupported outlines
-remain outside automatic spacing, as before.
-
-In any document, **Use Contour spacing** switches between stock and contour
-calculation at the same target space. Later manual sidebearing edits and kerning
-changes retain ownership across switches. **Automatic spacing** off freezes the
-current result. The existing conditional native Undo/Redo path handles generated
-changes. Mode and calibration choice survive saving/reopening a preview. The
-three navigation buttons refer to the comparison created in the current session;
-after restart, open the saved comparison/source documents normally.
-
-The contour model adds a learned residual to stock Graver, then reapplies the
-existing sampled clearance and punctuation guards. It preserves the approved
-word rhythm. Some quote/punctuation combinations remain too loose. Two additional
-punctuation experiments failed to improve overall agreement and are not enabled.
-The preview does not promise collision-proof arbitrary outlines or unattended
-production export, and does not make masters interpolation-compatible.
-
-Run `python3 test_contour.py` after building for frozen-output, exact stock
-fallback, renamed glyphs, incremental updates, manual-bearing precedence,
-tracking, live geometry and invalid-preset coverage. Native preview validation
-is recorded in `preview-validation.json`. The runtime ships inference coefficients, contour descriptors and a small
-regression fixture. Research notes and source material are not distributed.
-
-## Name and saved-settings compatibility
-
-Rigormortise was previously named Graver Spacing. The document metadata keys
-remain unchanged so existing enable states, calibrations, manual adjustments
-and kerning ownership continue to load without conversion. Remove the old
-plugin bundle when installing the renamed bundle to avoid duplicate menus.
-
-
-## Remembering your starting spacing (2026-10-25)
-
-The first activation saves an immutable baseline for each master in the font's
-metadata: eligible glyph sidebearings/widths and the complete master kerning table.
-It keeps the exact initial metrics, including fractional widths. Authored glyph,
-mixed, class and zero kerning remain protected. Automatic kerning can fill pairs
-that have no authored value.
-
-Initial sidebearings are retained as offsets from the calculated result. Outline
-edits can therefore adjust spacing without discarding your starting decisions.
-**Return selected to Auto** clears those offsets for selected glyphs; **Pin
-selected spacing** holds exact bearings instead. New eligible glyphs added while
-Auto is running receive automatic spacing.
-
-The last applied state also persists in the document. Manual spacing and kerning
-changes made with Auto off are recognized on re-enabling, including pair deletions.
-Re-enabling retains the current metrics; it does not replace the original baseline.
-Save the font to retain this memory across closing/reopening.
-
-**Restore starting spacing + kerning** restores the saved bearings and kerning,
-clears current Rigormortise overrides, and turns Auto off. It is undoable. Outlines
-are not restored: current shapes and metrics links remain authoritative, deleted
-glyphs are skipped, and exact starting widths are restored when shapes are unchanged.
-The saved baseline remains available after restoration.
-
-Existing installations capture their current values on the next activation/update;
-values overwritten before this feature cannot be recovered automatically. The
-optional Stock/Contour comparison still deliberately calculates new spacing in its
-copies. Native capture, off/on, save/reopen, restore and Undo/Redo checks are recorded
-in `baseline-validation.json`.
-
-
-## Apply to similar pairs
-
-With Auto enabled, adjust a pair's kerning in Glyphs. Open **Apply to similar
-pairs…** in the Rigormortise panel. Enter its two glyph names (for example,
-`n n`) and click **Use recorded edit**. Repeated nudges retain the total change
-from the first observed value; a new exception measures against inherited class
-kerning. You can also enter the intended change in units: positive loosens,
-negative tightens. The example pair itself remains your manual override.
-
-Choose **Similarity** (90% by default) and **Strength**, then **Preview matches**.
-Use **Skip pairs** for exceptions, entering two glyph names per pair separated
-by commas, such as `i period, j period`. Preview again after changing the list. The list shows
-all affected pairs, their match score, current kerning, and proposed kerning.
-**Open before / after proof** creates a disposable font copy showing the first
-16 matches: before on the left, after on the right, in list order. The source
-is unchanged until **Apply rule**. Preview again after changing the font or any
-settings. The panel remains bound to the source master, including while viewing
-the proof; changing the source's selected master requires reopening the panel.
-
-New lessons compare facing contours in the shared vertical region, normalized
-by x-height and measured in an upright frame for italic outlines. Modest local
-terminal offsets and a one-sample vertical displacement are tolerated; large
-overhang differences and different numbers of detached vertical ink bands are
-treated conservatively. Saved older lessons retain their original matching. Letter names do not determine similarity. A high threshold
-is intentionally conservative; an unusual pair may have no close matches.
-Closer matches receive more of the adjustment. The closest applicable rule wins
-when examples overlap, so their effects do not accumulate. Match percentages
-are geometric scores, not probabilities or a promise of optical equivalence.
-
-Rules are saved per master in the font metadata and recompute against current
-outlines during automatic updates. New rules are restricted to the concrete
-pairs shown in the approved preview. Adding a glyph or changing an outline
-cannot silently enroll another pair; preview a new rule to include it. Previous
-approved pairs are protected from later lessons, even if they temporarily stop
-matching after an outline edit. Removing a rule releases its own approval. Their reference shape is the approved example
-at creation time. Existing authored glyph/mixed/class pairs and manual pins are
-excluded. Collision and punctuation guards still apply to learned tightening.
-Ordinary spacing and model output are unchanged when there are no rules.
-
-Select any saved rule and **Remove rule** to recalculate without it; manual
-pair overrides remain protected. Applying/removing rules supports native Undo/Redo.
-Save the font to retain rules across reopening. **Restore starting spacing +
-kerning** also clears learned rules. This first version learns only from explicitly
-approved examples; it does not infer a broad preference from every edit.
-
-`test_similar_pairs.py` covers geometry matching, renamed glyphs, strength,
-non-stacking, inherited/class/manual ownership, cumulative edits, persistence,
-independent rule undo, live geometry and engine collision protection. Native
-preview/application/proof, stale-preview rejection, Undo/Redo, save/reload and
-removal checks are recorded in `similar-pairs-validation.json`.
-
-The preview contract and geometry changes are covered by synthetic outline,
-legacy-rule, exclusion, approval-scope, stale-preview and undo tests. The revised
-panel and before/after proof were also checked in Glyphs 3 using a disposable
-font. Native apply, exclusions, prior approvals, Undo/Redo, save/reload, rule
-removal and source preservation passed; results are recorded in
-`similar-review-validation.json`.
+Saved metadata still uses the old Graver Spacing keys so existing documents load
+without conversion. Settings from the original single-master version migrate to
+the first master only.
