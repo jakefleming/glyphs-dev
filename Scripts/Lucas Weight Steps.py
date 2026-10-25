@@ -3,14 +3,14 @@
 __doc__ = """
 Prints geometrically spaced stem widths from CURRENT_STEM to TARGET_STEM
 (Lucas de Groot's interpolation theory: equal growth percentage per step,
-not equal units), with the matching Proportional Weight custom parameter
+not equal units), with the matching lil Devil custom parameter
 for each instance.
 """
 
 CURRENT_STEM = 88.0  # measured vertical stem of the master the filter runs on
 TARGET_STEM = 220.0  # stem of the heaviest (or thinnest) style you want
 STEPS = 4  # number of new styles up to and including the target
-VERTICAL = 40  # passed through to the Proportional Weight parameter
+VERTICAL = 40  # passed through to the lil Devil parameter
 COUNTERS = 100
 WIDTH = 100
 
