@@ -1,4 +1,4 @@
-"""Make Italic regression harness (run with plain python3, no Glyphs needed).
+"""Curse regression harness (run with plain python3, no Glyphs needed).
 
 Fixtures live in ../fixtures/makeitalic/<name>.json:
     {"paths": [[x, y, type, smooth], ...], "xHeight": ..,
@@ -17,7 +17,7 @@ Usage:
 import sys, os, json, math, types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLUGIN = os.path.join(HERE, "..", "Plugins", "MakeItalic.glyphsFilter", "Contents", "Resources", "plugin.py")
+PLUGIN = os.path.join(HERE, "..", "Plugins", "Curse.glyphsFilter", "Contents", "Resources", "plugin.py")
 FIXDIR = os.path.join(HERE, "..", "fixtures", "makeitalic")
 BASELINE = os.path.join(FIXDIR, "_baseline.json")
 

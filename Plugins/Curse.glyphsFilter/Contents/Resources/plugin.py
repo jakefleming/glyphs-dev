@@ -2,7 +2,7 @@
 from __future__ import division, print_function, unicode_literals
 
 """
-Make Italic — optically corrected oblique.
+Curse — optically corrected oblique.
 
 Curve correction (the core, same construction Italify uses):
   work on the UPRIGHT outline first, then slant. Every cubic is extended
@@ -230,7 +230,7 @@ class MakeItalic(FilterWithDialog):
 
 	@objc.python_method
 	def settings(self):
-		self.menuName = "Make Italic"
+		self.menuName = "Curse"
 		self.actionButtonLabel = "Apply"
 
 		W = 300

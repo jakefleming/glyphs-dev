@@ -2,7 +2,7 @@
 from __future__ import division, print_function, unicode_literals
 
 """
-Make Weight — structure-aware weight change (companion to Make Italic).
+Bastard — structure-aware weight change (companion to Curse).
 
 A plain offset moves every point the same distance along its normal and
 so squares off bowls, clogs counters and blobs joins. This filter keeps the
@@ -120,7 +120,7 @@ class MakeWeight(FilterWithDialog):
 
 	@objc.python_method
 	def settings(self):
-		self.menuName = "Make Weight"
+		self.menuName = "Bastard"
 		self.actionButtonLabel = "Apply"
 		W = 300
 		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 240))

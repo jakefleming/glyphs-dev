@@ -19,6 +19,9 @@ Typical combo: Cornerize Curves (Threshold), then Remove Shallow Points.
 
 Symlinked into `~/Library/Application Support/Glyphs 3/Plugins/`. Plugins load at app startup, so restart Glyphs after changes.
 
+- **Bastard** (`Bastard.glyphsFilter`) — Filter > Bastard. Changes stroke weight with controls for counters, round curves, and horizontal strokes.
+- **Curse** (`Curse.glyphsFilter`) — Filter > Curse. Slants outlines with optical corrections for curves, diagonals, stems, and terminals.
+
 - **lil Devil** (`LilDevil.glyphsFilter`) — Filter > lil Devil. Adds or removes weight by offsetting the outline, then rescales back to the original bounding box so proportions and width are preserved. Sliders:
   - **Weight** — offset amount in units; positive = bolder.
   - **Vertical %** — how much of the weight goes to horizontals relative to verticals (anisotropy). 100 = round nib.
