@@ -90,10 +90,6 @@ only the font file. A notification reports the result.
   `MAX_DEV` units of the curve. Larger curves are flattened instead.
 - **Remove Shallow Points** removes points that deviate less than `TOL` units
   from the line between their neighbours.
-- **Lucas Weight Steps** prints a progression of stem widths from `CURRENT_STEM`
-  to `TARGET_STEM`, with a lil Devil filter parameter for each step. Each step
-  changes the width by the same percentage. Run it separately for heavier and
-  lighter weights.
 
 For angular outlines, try **Cornerize Curves (Threshold)** followed by
 **Remove Shallow Points**. Adjust the constants in each script for the amount
