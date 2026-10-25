@@ -1,2 +1,5 @@
 __pycache__/
 .DS_Store
+
+# Local research notes and reference material
+/research/

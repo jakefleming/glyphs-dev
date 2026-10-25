@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-24",
+  "passed": true,
+  "scope": "Opt-in single-master comparison copies from a multi-master source; Saddleshoe v3 presets",
+  "native": {
+    "undoMetrics": true,
+    "undoPairs": true,
+    "redoMetrics": true,
+    "redoPairs": true,
+    "manualSideDetected": true,
+    "manualPairDetected": true,
+    "sidePreserved_None": true,
+    "pairPreserved_None": true,
+    "sidePreserved_saddleshoe-regular-v3": true,
+    "pairPreserved_saddleshoe-regular-v3": true,
+    "curveEditPreserved": true,
+    "fractionalYRetained": true,
+    "allPassed": true
+  },
+  "sourcePreserved": {
+    "sourceKerningUnchanged": true,
+    "sourceContoursUnchanged": true,
+    "sourceAutospacingStateUnchanged": true
+  },
+  "export": {
+    "stock": "True",
+    "contour": "True"
+  },
+  "engineParity": {
+    "pairsCompared": 13122,
+    "stockExact": true,
+    "blackCandidateExact": true,
+    "regularLetterPairsExact": true,
+    "regularPunctuationRoundingDifferences": 3,
+    "maximumDifference": 1
+  },
+  "testSuites": {
+    "state": 6,
+    "undoState": 4,
+    "metrics": 3,
+    "contour": 6,
+    "engine": "deterministic, incremental, manual sidebearing, italic"
+  },
+  "limitations": [
+    "Saddleshoe-specific presets; no generic calibration UI",
+    "Source masters are not edited; previews have one master",
+    "Some punctuation gaps remain imperfect",
+    "Native application adds an Undo step; wait for idle before exporting",
+    "Comparison navigation lasts for the controller session"
+  ],
+  "files": {
+    "graver-spacing-engine": "a2a02fac2eebb32f34131c1a95bfa83d1dda7e71ca4b4d8f9d1426b131b8c94f",
+    "graver_spacing.py": "62177a923caa94a55f728564b0ff281fb4a4ed7bcf11459a3bd699941308c60c",
+    "models/saddleshoe-black-v3.json": "f377c743465dc89e2a1b95263c7d992c90bb60eaac08d512558eacc152bdce53",
+    "models/saddleshoe-regular-v3.json": "dbc7619507d45a852b917aef3e6d9b9fbb25e7550c3782b050560823cc38a287"
+  }
+}

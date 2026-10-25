@@ -2,7 +2,7 @@
 
 **Experimental, opt-in version.** Final native Undo/Redo checks, including fractional sidebearings, and OTF export passed. The revised adapter passed native Glyphs 3.4.1 UI Undo/Redo checks for manual sidebearings and contour edits, exact snapshot comparisons, override persistence, and OTF export on a Saddleshoe copy. The original font remains off. See `validation.json` for the recorded checks. This is not yet a promise that every Glyphs workflow or font is supported.
 
-A local, always-on spacing adapter for Glyphs 3.4.1. Open **Edit → Graver Spacing…**, then enable it for the current font. Its settings and ownership records live in the `.glyphs` document. It is off for documents that have not explicitly enabled it.
+A local, always-on spacing adapter for Glyphs 3.4.1. Open **Edit → Graver Spacing…**, then enable it for the current master. Its settings and ownership records live in the `.glyphs` document. Each master is off until explicitly enabled. Settings and ownership are independent per master.
 
 ## Controls
 
@@ -18,7 +18,7 @@ The current result is written as normal Glyphs spacing and kerning and exported 
 
 ## Scope
 
-First version: single-master Latin fonts, numbers, and punctuation. Multi-master fonts are rejected without changes. Non-Latin letters, combining marks, spaces, empty/open outlines, and non-exporting glyphs are excluded. Composite glyphs, hinted glyphs, and metrics-linked sides retain their metrics. Components are decomposed only for measurement, never in the font. Component and accented inheritance beyond existing Glyphs metric links is not a complete port of Graver's document model.
+Single- and multi-master Latin fonts, numbers, and punctuation. Only the enabled, selected master is monitored for edits; pending results remain bound to their originating master. Switching masters changes the panel and does not enable the other master. Non-Latin letters, combining marks, spaces, empty/open outlines, and non-exporting glyphs are excluded. Composite glyphs, hinted glyphs, and metrics-linked sides retain their metrics. Components are decomposed only for measurement, never in the font. Component and accented inheritance beyond existing Glyphs metric links is not a complete port of Graver's document model.
 
 Existing kerning groups are honored. Generated kerning is individual pairs, not inferred classes; a dense pair table can result. Intentional overlaps can be authored as pair overrides or by disabling collision protection.
 
@@ -36,6 +36,7 @@ The worker is a persistent local Swift process. It caches outline profiles, comp
 
 ```
 python3 build_engine.py
+python3 test_master_state.py
 python3 test_state.py
 python3 test_undo_state.py
 python3 test_metrics.py
@@ -59,3 +60,73 @@ Engine sources, build, tests, and fixtures: `Plugins/GraverSpacing/` (this direc
 The installed plugin at `~/Library/Application Support/Glyphs 3/Plugins/GraverSpacing.glyphsPlugin` is symlinked to the repository bundle, like the other plugins in this repo. Restart Glyphs after Python or engine changes; an already-running controller/worker can still use the previous code. No restart is required merely to relocate identical files.
 
 Migrated from the Codex workspace `2026-10-20/yo-x20/work/graver-spacing` on 2026-10-24. The runtime bundle was byte-for-byte identical to the installed working version at migration.
+
+## Direct master spacing (2026-10-24)
+
+Open **Edit → Graver Spacing…** in your existing document. Select a master,
+choose the matching Saddleshoe calibration, and enable **Automatic spacing on
+this master**. The normal workflow edits that document directly; it creates no
+new files. Use **Use Contour spacing** to switch the reviewed algorithm on/off.
+Each master retains its own calibration, target space, enable state, manual
+sidebearing adjustments, and kerning ownership when the font is saved.
+
+Enabling Auto preserves existing authored kerning. To replace a previous
+kerning result, click **Replace existing kerning on this master**. This enables
+Auto and recalculates kerning on that master, preserving explicit Graver pins.
+It replaces existing glyph, mixed, and class pairs, including unclassified
+pairs from another tool; it cannot infer which of those were hand tuned. The replacement is undoable; keep Auto in preserve mode if those existing
+pairs must stay unchanged. Turn
+off other live kerning tools on the same document before using Graver.
+
+Native validation on a disposable two-master Saddleshoe copy covers master
+isolation, full replacement, manual overrides, undo/redo after switching
+masters, stale-worker rejection, fractional curves, and save/reload. See
+`direct-master-validation.json`. Original single-master settings migrate only
+to the first master; they are never copied onto the second master.
+
+## Optional Contour preview
+
+Open **Edit → Graver Spacing…**, choose the Saddleshoe calibration, and click
+**Create Stock + Contour preview**. This copies the selected master into two new,
+independent, single-master documents. The source can have multiple masters; its
+outlines, spacing, kerning and auto-spacing settings are not modified. Use **View
+Stock**, **View Contour**, and **Back to source** to compare. Save either preview
+with Save As if you want to keep working on it.
+
+The Regular preset is the reviewed v3 candidate. The Wide Black preset is the v3
+study counterpart. Calibration is bundled: no manual pair survey, NumPy install,
+or external spacing runtime is needed. These are Saddleshoe calibrations, not universal
+models for unrelated fonts or different units-per-em. No glyph-name or pair-name
+exceptions participate in prediction. Facing contours are measured anew after
+edits. The compiled engine normally takes about 70–90 ms for 81 glyphs on the
+validation Mac, plus the UI's existing idle delay and native application time.
+
+Preview copies replace unpinned reference kerning. Explicit Graver sidebearing
+adjustments/pins, Graver pair pins, and metrics-key/component locks survive.
+Unclassified kerning in a source from another tool remains intact in the source;
+it is not treated as manually pinned in the comparison. Extension user data is
+removed **only from the new copies** to prevent competing automation. Graver
+overrides are explicitly restored afterward. Originals retain all metadata.
+The copies retain every glyph, but marks, separators and unsupported outlines
+remain outside automatic spacing, as before.
+
+In any document, **Use Contour spacing** switches between stock and contour
+calculation at the same target space. Later manual sidebearing edits and kerning
+changes retain ownership across switches. **Automatic spacing** off freezes the
+current result. The existing conditional native Undo/Redo path handles generated
+changes. Mode and calibration choice survive saving/reopening a preview. The
+three navigation buttons refer to the comparison created in the current session;
+after restart, open the saved comparison/source documents normally.
+
+The contour model adds a learned residual to stock Graver, then reapplies the
+existing sampled clearance and punctuation guards. It preserves the approved
+word rhythm. Some quote/punctuation combinations remain too loose. Two additional
+punctuation experiments failed to improve overall agreement and are not enabled.
+The preview does not promise collision-proof arbitrary outlines or unattended
+production export, and does not make masters interpolation-compatible.
+
+Run `python3 test_contour.py` after building for frozen-output, exact stock
+fallback, renamed glyphs, incremental updates, manual-bearing precedence,
+tracking, live geometry and invalid-preset coverage. Native preview validation
+is recorded in `preview-validation.json`. The runtime ships inference coefficients, contour descriptors and a small
+regression fixture. Research notes and source material are not distributed.

@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "date": "2026-10-24",
+  "native": {
+    "independentDefaults": true,
+    "authoredPairsPreserved": true,
+    "otherMasterUntouched": true,
+    "takeoverChangesPairs": true,
+    "undoAfterMasterSwitch": true,
+    "redoAfterMasterSwitch": true,
+    "blackApplyLeavesRegular": true,
+    "manualOverridesSurviveTakeover": true,
+    "overridesDoNotLeak": true,
+    "workerTargetsOriginalMaster": true,
+    "staleWorkerRejected": true,
+    "fractionalContoursPreserved": true,
+    "perMasterStateSurvivesSave": true,
+    "sourceUnchanged": true,
+    "allPassed": true
+  },
+  "live": {
+    "timerApplied": true,
+    "otherMasterUnchanged": true,
+    "selectedMasterLabel": true,
+    "enabled": true,
+    "switchChangesPanel": true,
+    "allPassed": true
+  }
+}

@@ -32,5 +32,39 @@
     "No synchronization with export launched during pending calculation",
     "Generated kerning is individual pairs, not class-packed",
     "Installed launcher requires Glyphs restart; no forced restart or production-font enablement"
-  ]
+  ],
+  "contourPreview": {
+    "date": "2026-10-24",
+    "passed": true,
+    "report": "Plugins/GraverSpacing/preview-validation.json"
+  },
+  "directMaster": {
+    "passed": true,
+    "date": "2026-10-24",
+    "native": {
+      "independentDefaults": true,
+      "authoredPairsPreserved": true,
+      "otherMasterUntouched": true,
+      "takeoverChangesPairs": true,
+      "undoAfterMasterSwitch": true,
+      "redoAfterMasterSwitch": true,
+      "blackApplyLeavesRegular": true,
+      "manualOverridesSurviveTakeover": true,
+      "overridesDoNotLeak": true,
+      "workerTargetsOriginalMaster": true,
+      "staleWorkerRejected": true,
+      "fractionalContoursPreserved": true,
+      "perMasterStateSurvivesSave": true,
+      "sourceUnchanged": true,
+      "allPassed": true
+    },
+    "live": {
+      "timerApplied": true,
+      "otherMasterUnchanged": true,
+      "selectedMasterLabel": true,
+      "enabled": true,
+      "switchChangesPanel": true,
+      "allPassed": true
+    }
+  }
 }

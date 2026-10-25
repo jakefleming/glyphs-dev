@@ -10,6 +10,7 @@ struct Request: Decodable {
     var glyphs: [InputGlyph]; var xHeight: Double; var capHeight: Double
     var space: Double; var slant: Double; var protect: Bool
     var changed: [String]?
+    var contourPreset: String?
 }
 struct ResultGlyph: Encodable { var left: Double; var right: Double; var width: Double }
 struct Reply: Encodable { var metrics: [String:ResultGlyph]; var pairs: [String:Double]; var elapsedMS: Double }
@@ -51,12 +52,31 @@ func run(_ r: Request) throws -> Reply {
         entries.append((g,p,m));results[g.name]=ResultGlyph(left:m.left,right:m.right,width:m.advance)
     }
     let context=try BodySpacing.context([(glyphs:entries.map { ($0.1,$0.2) },settings:settings)])
+    let model=try r.contourPreset.map { try ContourSpacing.model($0) }
+    let similarities=model.map { ContourSpacing.prepare(r.glyphs,r,$0) }
+    // Candidate baseline is stock with no user bearing adjustments, exactly as
+    // in the accepted research runtime. Manual edits must not be cancelled.
+    var automatic: [String:OpticalSpacing.Metrics] = [:]
+    if model != nil {
+        for (g,p,_) in entries {
+            var letter=Letter();letter.designCharacter=g.character
+            var m=BodySpacing.metrics(p,letter:letter,settings:settings,character:g.character)
+            m.advance=max(1,p.bounds.width+m.left+m.right)
+            automatic[g.name]=m
+        }
+    }
     let changed=r.changed.map { Set($0) }
     var pairs: [String:Double] = [:]
     for (a,ap,am) in entries {
         for (b,bp,bm) in entries {
             if let changed, !changed.contains(a.name) && !changed.contains(b.name) { continue }
-            pairs[a.name+"\t"+b.name]=BodySpacing.kern(ap,am,bp,bm,settings:settings,context:context)
+            if let model, let similarities {
+                let stock=BodySpacing.kern(ap,automatic[a.name]!,bp,automatic[b.name]!,settings:settings,context:context)
+                let preferred=stock+ContourSpacing.residual(similarities[a.name]!,similarities[b.name]!,model)
+                pairs[a.name+"\t"+b.name]=ContourSpacing.protect(preferred,ap,am,bp,bm,settings)
+            } else {
+                pairs[a.name+"\t"+b.name]=BodySpacing.kern(ap,am,bp,bm,settings:settings,context:context)
+            }
         }
     }
     return Reply(metrics:results,pairs:pairs,elapsedMS:Date().timeIntervalSince(start)*1000)
