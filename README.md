@@ -1,49 +1,121 @@
 # glyphs-dev
 
-Scripts and plugins for Glyphs 3.
+Plugins and scripts for drawing, transforming and spacing type in Glyphs 3.
 
-## Scripts
+## Installation
 
-Symlinked into `~/Library/Application Support/Glyphs 3/Scripts/`. Reload in Glyphs with Cmd+Opt+Shift+Y. Assign hotkeys in Glyphs > Settings > Shortcuts.
+Put plugin bundles in:
 
-- **Flatten Curves** — removes handles and replaces each curve with `STEPS` straight segments.
-- **Cornerize Curves** — replaces each curve with a single corner point at the intersection of the two extended handles.
-- **Cornerize Curves (Threshold)** — same, but only when the corner lands within `MAX_DEV` units of the curve; big sweeping curves get flattened instead. This is the good one.
-- **Remove Shallow Points** — deletes points that deviate less than `TOL` units from the straight line between their neighbors. Run after cornerizing to clean up.
+```
+~/Library/Application Support/Glyphs 3/Plugins/
+```
 
-Typical combo: Cornerize Curves (Threshold), then Remove Shallow Points.
+Put scripts in:
 
-- **Lucas Weight Steps** — prints geometrically spaced stem widths from `CURRENT_STEM` to `TARGET_STEM` (Lucas de Groot's interpolation theory: constant growth *percentage* per step, so the weight progression looks optically even), along with the matching lil Devil custom parameter for each instance. Run once toward Black and once toward Thin.
+```
+~/Library/Application Support/Glyphs 3/Scripts/
+```
+
+You can symlink these files from the repository while developing. Restart Glyphs
+for plugin changes. Reload scripts with **Cmd+Opt+Shift+Y**. Script shortcuts can
+be assigned in **Glyphs → Settings → Shortcuts**.
 
 ## Plugins
 
-Symlinked into `~/Library/Application Support/Glyphs 3/Plugins/`. Plugins load at app startup, so restart Glyphs after changes.
+### Bastard
 
-- **Bastard** (`Bastard.glyphsFilter`) — Filter > Bastard. Changes stroke weight with controls for counters, round curves, and horizontal strokes.
-- **Curse** (`Curse.glyphsFilter`) — Filter > Curse. Slants outlines with optical corrections for curves, diagonals, stems, and terminals.
+[Bastard](Plugins/Bastard.glyphsFilter) changes stroke weight. Open
+**Filter → Bastard** and set **Weight**: positive makes strokes heavier,
+negative makes them lighter.
 
-- **lil Devil** (`LilDevil.glyphsFilter`) — Filter > lil Devil. Adds or removes weight by offsetting the outline, then rescales back to the original bounding box so proportions and width are preserved. Sliders:
-  - **Weight** — offset amount in units; positive = bolder.
-  - **Vertical %** — how much of the weight goes to horizontals relative to verticals (anisotropy). 100 = round nib.
-  - **Counters %** — how much of the offset applies to counter contours. Below 100 protects counters when bolding (weight goes to the outside of the letter instead of clogging the counters, RMX-style); 100 = plain offset. A counter that still collapses (offset exceeds its size) is dropped cleanly instead of turning inside out.
-  - **Width %** — condenses/extends outlines and advance width together.
-  - **Harmony %** — slides smooth nodes along their handle line to the curvature-continuous (G2) position; kills the subtle kink at curve joins. 0 = off, 100 = fully harmonized. Prior art: RMX Harmonizer, Hobby splines.
-  - **Balance %** — equalizes each curve segment's two handle fractions (measured against the tangent intersection) without changing endpoints or tangent directions. Prior art: Curve Equalizer.
+**Counters** controls how much weight moves outward instead of into the white
+space. **Rounds** controls how closely curves retain their original tension.
+**Vertical** sets the amount applied to horizontal strokes relative to vertical
+ones. Check tight joins and small counters when making large changes.
 
-  Harmony and Balance run before the weight offset, so weight is applied to the cleaned outline. Both are no-ops on straight-line fonts.
+### Curse
 
-  Also usable as a custom parameter: `ProportionalWeight; amount:N; vertical:N; counters:N; width:N; harmony:N; balance:N`.
+[Curse](Plugins/Curse.glyphsFilter) makes an optically corrected oblique. Open
+**Filter → Curse**, set the angle, and adjust the corrections for curves,
+diagonals, stems and terminals. **Keep nodes on extremes** adjusts vertical
+extrema after slanting.
+
+It transforms the existing outlines. It won't draw a new italic `a` or `g` for
+you. Curves and joins still need inspection after applying it.
+
+### lil Devil
+
+[lil Devil](Plugins/LilDevil.glyphsFilter) combines weight changes with controls
+for proportions and curve shape. Open **Filter → lil Devil**. When applied to a
+whole glyph, the weight offset is rescaled to its original bounds. With points
+selected, the offset can be applied locally instead.
+
+Use **Weight** and **Counters** to control the black and white space, and the
+width and height controls to change proportions. Stress, pressure, slant and
+counter position give you further ways to reshape the letters.
+
+**Harmony** adjusts smooth joins to reduce changes in curvature. **Balance**
+equalizes the handle proportions within each curve. These run after the other
+transformations and have no effect on straight segments.
+
+For instance filters, a basic custom parameter is:
+
+```
+ProportionalWeight; amount:20; vertical:100; counters:80; width:100; harmony:0; balance:0
+```
 
 ### Rigormortise
 
-**Rigormortise** (`Plugins/Rigormortise.glyphsPlugin`) adds opt-in automatic spacing and kerning through **Edit → Rigormortise…**. It preserves manual adjustments and includes the undo/redo and fractional-coordinate fixes. Supports per-master operation in single- and multi-master Latin fonts; see [the development README](Plugins/Rigormortise/README.md) for limitations and recorded validation.
+[Rigormortise](Plugins/Rigormortise/README.md) updates spacing and kerning as you
+draw. Open **Edit → Rigormortise…** and enable it for the selected master. It
+remembers your starting spacing and keeps manual adjustments. You can also
+preview how an adjustment to one pair would work on similar pairs.
 
-The Swift engine source, build command, regression tests, and fixtures live in [`Plugins/Rigormortise/`](Plugins/Rigormortise/). The installed Glyphs bundle is symlinked to this repository, matching the other development plugins.
+See the [Rigormortise guide](Plugins/Rigormortise/README.md) for controls,
+restoration, current limits, and build instructions.
 
-### Python plugin bundle anatomy
+### Push to Git
 
-A hand-built Python plugin needs, or it won't load:
+[Push to Git](Plugins/PushToGit.glyphsPlugin) adds **File → Save, Commit & Push**
+(**Ctrl+Cmd+S**). It saves the current font, commits it and pushes to its Git
+remote. The font must already belong to a Git repository. By default, it stages
+only the font file. A notification reports the result.
 
-1. `Contents/MacOS/plugin` — the generic loader binary (copied from any working Python plugin).
-2. `Info.plist` keys: `CFBundleExecutable = plugin`, `PyMainFileNames = [plugin.py]`, `NSPrincipalClass = <class name in plugin.py>`.
-3. A valid signature after touching the binary: `codesign --force --deep --sign - <bundle>`.
+## Scripts
+
+- **Flatten Curves** replaces each curve with `STEPS` straight segments.
+- **Cornerize Curves** replaces a curve with a corner at the intersection of its
+  endpoint tangents.
+- **Cornerize Curves (Threshold)** does this only when the corner falls within
+  `MAX_DEV` units of the curve. Larger curves are flattened instead.
+- **Remove Shallow Points** removes points that deviate less than `TOL` units
+  from the line between their neighbours.
+- **Lucas Weight Steps** prints a progression of stem widths from `CURRENT_STEM`
+  to `TARGET_STEM`, with a lil Devil filter parameter for each step. Each step
+  changes the width by the same percentage. Run it separately for heavier and
+  lighter weights.
+
+For angular outlines, try **Cornerize Curves (Threshold)** followed by
+**Remove Shallow Points**. Adjust the constants in each script for the amount
+of detail you want to keep.
+
+## Development
+
+Python plugin bundles contain a loader at `Contents/MacOS/plugin` and an
+`Info.plist` that names the Python entry point and principal class. The class
+name must match the implementation in `Contents/Resources/plugin.py`.
+
+After editing a signed bundle, refresh its local signature:
+
+```sh
+codesign --force --deep --sign - path/to/Plugin.glyphsFilter
+```
+
+Curse has a regression harness that runs outside Glyphs:
+
+```sh
+python3 Scripts/_makeitalic_harness.py
+```
+
+It currently reports four failures against its saved baseline. Inspect its
+output as well as the process exit status.
