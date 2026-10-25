@@ -8,9 +8,9 @@ It works in your open Glyphs document. The result is ordinary sidebearings and
 kerning, so you can turn the plugin off and carry on editing or export the font.
 Settings are saved in the `.glyphs` file, separately for each master.
 
-This is version 0.1, tested in Glyphs 3.4.1. Try it on a copy first. The bundled
-Contour presets were developed for Saddleshoe; their results on other fonts,
-particularly italic punctuation, still need work.
+This is version 0.1, tested in Glyphs 3.4.1. Try it on a copy first. The Contour
+presets have had limited testing across typefaces. Italic punctuation still
+needs work.
 
 ## Installation
 
@@ -39,8 +39,8 @@ is preserved. Auto fills pairs which have no authored value.
 
 **Target space** controls the overall spacing. **Use Contour spacing** adds a
 contour-based correction to the stock calculation, using the selected preset.
-The Regular and Wide Black presets are calibrated for Saddleshoe. They aren't
-general-purpose presets for every typeface or units-per-em value.
+The presets are experimental. Check their results on your typeface, especially
+if you change the units per em.
 
 Only the selected master is monitored. If you switch masters during a
 calculation, its result still belongs to the master that started it. The panel
