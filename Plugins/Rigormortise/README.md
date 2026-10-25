@@ -23,9 +23,6 @@ Install [`Rigormortise.glyphsPlugin`](../Rigormortise.glyphsPlugin) in:
 Restart Glyphs, then open **Edit → Rigormortise…**. The bundled engine runs on
 Apple Silicon. To build it for another Mac, see [Development](#development).
 
-If you have the old **Graver Spacing** bundle installed, remove it to avoid
-getting two menus. Rigormortise still reads its saved settings.
-
 ## Start with your existing spacing
 
 Select a master and enable **Automatic spacing on this master**. Each master
@@ -111,8 +108,7 @@ to tightening.
 Change the font or the settings after previewing, and you'll need to preview
 again before applying. **Remove rule** recalculates the spacing without that
 rule and makes its pairs available to later rules. Manual overrides remain.
-Both applying and removing rules support Undo/Redo. Older saved rules retain
-their original matching behaviour.
+Both applying and removing rules support Undo/Redo.
 
 ## Undo and restore
 
@@ -129,10 +125,6 @@ Restoring spacing doesn't restore outlines. Current metrics links are respected,
 deleted glyphs are skipped, and exact starting widths can be restored when the
 shapes are unchanged. Re-enabling Auto doesn't overwrite the original saved
 values. New eligible glyphs receive automatic spacing.
-
-For documents used before the starting-spacing feature existed, the plugin
-records the values it finds on the next activation or update. It cannot recover
-values which were already overwritten.
 
 ## Compare Stock and Contour
 
@@ -190,12 +182,8 @@ caches profiles between requests. The adapter waits for a pause in editing,
 avoids mouse drags, and discards results if the document has changed underneath
 them. The plugin makes no network requests.
 
-The engine sources come from Graver: `BodySpacing.swift`, the spacing and profile
-code in `Spacing.swift`, parts of `RenderCache.swift`, and cubic utilities from
-`CurveFit.swift`. `Models.swift` and `main.swift` provide the worker's data types
-and newline-delimited JSON protocol. `source-manifest.json` records the source
-hashes. Building uses the files in this repository; it doesn't read a separate
-Graver checkout. Updating those source files is a separate maintenance task.
+`engine/` contains the spacing calculations, outline measurement and worker
+protocol. `build_engine.py` compiles these sources into the plugin bundle.
 
 The launcher comes from the [Glyphs SDK](https://github.com/schriftgestalt/GlyphsSDK/tree/Glyphs3/Python%20Templates/General%20Plugin).
 Its checksum is recorded in `launcher-provenance.json`.
@@ -226,7 +214,3 @@ export, master switching, saved settings, restoration and similar-pair proofs.
 The results are in `validation.json`, `direct-master-validation.json`,
 `preview-validation.json`, `baseline-validation.json`,
 `similar-pairs-validation.json` and `similar-review-validation.json`.
-
-Saved metadata still uses the old Graver Spacing keys so existing documents load
-without conversion. Settings from the original single-master version migrate to
-the first master only.
