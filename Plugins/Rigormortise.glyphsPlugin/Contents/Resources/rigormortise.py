@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Live Graver spacing adapter. All Glyphs object access stays on the main thread."""
+"""Live Rigormortise spacing adapter. All Glyphs object access stays on the main thread."""
 import os, json, hashlib, time, copy, traceback, subprocess, threading, queue
 import objc
 from Foundation import NSObject, NSTimer, NSMakeRect, NSNotificationCenter
@@ -186,7 +186,7 @@ class Engine:
             if request is None: return
             try:
                 if self.process is None or self.process.poll() is not None:
-                    self.process=subprocess.Popen([os.path.join(RESOURCE,'graver-spacing-engine')],
+                    self.process=subprocess.Popen([os.path.join(RESOURCE,'rigormortise-engine')],
                         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
                 self.process.stdin.write(json.dumps(request,separators=(',',':'))+'\n');self.process.stdin.flush()
                 line=self.process.stdout.readline()
@@ -200,13 +200,13 @@ class Engine:
         if self.process and self.process.poll() is None: self.process.terminate()
 
 
-class GraverSpacingUndoRecordV22(NSObject):
+class RigormortiseUndoRecordV22(NSObject):
     pass
 
 
-class GraverSpacingControllerV22(NSObject):
+class RigormortiseControllerV22(NSObject):
     def init(self):
-        self=objc.super(GraverSpacingControllerV22,self).init()
+        self=objc.super(RigormortiseControllerV22,self).init()
         if self is None: return None
         self.engine=Engine();self.sessions={};self.pending=None;self.serial=0
         self.changedAt=0;self.dirty=True;self.force=False;self.applying=False
@@ -217,7 +217,7 @@ class GraverSpacingControllerV22(NSObject):
 
     @objc.python_method
     def start(self):
-        self.menu=NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Graver Spacing…','showPanel:','')
+        self.menu=NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Rigormortise…','showPanel:','')
         self.menu.setTarget_(self);Glyphs.menu[EDIT_MENU].append(self.menu)
         Glyphs.addCallback(self.changed,UPDATEINTERFACE)
         center=NSNotificationCenter.defaultCenter()
@@ -338,7 +338,7 @@ class GraverSpacingControllerV22(NSObject):
         pairs=pair_delta(before['pairs'],after['pairs'])
         state=state_delta(oldstate,newstate)
         if not (metrics or pairs or state):return
-        record=GraverSpacingUndoRecordV22.alloc().init()
+        record=RigormortiseUndoRecordV22.alloc().init()
         record.font=font;record.master=before['master'];record.metrics=metrics;record.pairs=pairs;record.state=state
         record.manager=manager if manager is not None else self.undoManager(font)
         m=record.manager
@@ -347,7 +347,7 @@ class GraverSpacingControllerV22(NSObject):
         if ownGroup:m.beginUndoGrouping()
         try:
             m.registerUndoWithTarget_selector_object_(self,'restore:',record)
-            m.setActionName_('Graver Spacing')
+            m.setActionName_('Rigormortise')
         finally:
             if ownGroup:m.endUndoGrouping()
         self.undoCount+=1
@@ -433,7 +433,7 @@ class GraverSpacingControllerV22(NSObject):
             raw=snap['pairs']
             if s.pop('replaceKerning',False):
                 # Explicit one-shot takeover, in the same undo record as spacing.
-                # Existing Graver pins survive, including zero-valued pins.
+                # Existing Rigormortise pins survive, including zero-valued pins.
                 for key in raw:
                     if key not in pinned:
                         a,b=key.split('\t');font.removeKerningForPair(snap['master'],a,b)
@@ -485,7 +485,7 @@ class GraverSpacingControllerV22(NSObject):
             self.setStatus('Off — current spacing is retained')
         else:
             try:self.enable(font)
-            except Exception as e:Message('Graver Spacing',str(e))
+            except Exception as e:Message('Rigormortise',str(e))
         self.refreshPanel()
 
     def gap_(self,sender):
@@ -542,7 +542,7 @@ class GraverSpacingControllerV22(NSObject):
             for obj in objects:
                 for key in list(obj.userData.keys() or []):
                     del obj.userData[key]
-            font.familyName=source.familyName+' '+master.name+' Graver '+mode
+            font.familyName=source.familyName+' '+master.name+' Rigormortise '+mode
             font.instances=[]
             instance=GSInstance();instance.name=master.name;instance.axes=list(master.axes)
             font.instances.append(instance)
@@ -551,7 +551,7 @@ class GraverSpacingControllerV22(NSObject):
             state.update(enabled=True,contourPreset=preset if mode=='Contour' else None,
                          overrides=copy.deepcopy(sourceState['overrides']),
                          pinnedPairs=copy.deepcopy(sourceState['pinnedPairs']))
-            # Pins explicitly made in Graver survive; unpinned reference kerning
+            # Pins explicitly made in Rigormortise survive; unpinned reference kerning
             # is what the comparison replaces, solely in these new documents.
             for key,value in state['pinnedPairs'].items():
                 a,b=key.split('\t')
@@ -578,7 +578,7 @@ class GraverSpacingControllerV22(NSObject):
     def preview_(self,sender):
         try:self.makePreview(current_font(),int(self.presetPopup.indexOfSelectedItem()))
         except Exception as e:
-            traceback.print_exc();Message('Graver preview',str(e))
+            traceback.print_exc();Message('Rigormortise preview',str(e))
 
     @objc.python_method
     def showComparison(self,which):
@@ -620,7 +620,7 @@ class GraverSpacingControllerV22(NSObject):
         s['replaceKerning']=True
         self.pending=None
         self.enable(font);self.refreshPanel()
-        self.setStatus('Rebuilding this master; Graver pins will stay. Undo available.')
+        self.setStatus('Rebuilding this master; Rigormortise pins will stay. Undo available.')
 
     @objc.python_method
     def refreshPanel(self):
@@ -641,7 +641,7 @@ class GraverSpacingControllerV22(NSObject):
     def showPanel_(self,sender):
         if not self.window:
             self.window=NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0,0,460,535),3,NSBackingStoreBuffered,False)
-            self.window.setTitle_('Graver Spacing');self.window.setReleasedWhenClosed_(False);self.window.center()
+            self.window.setTitle_('Rigormortise');self.window.setReleasedWhenClosed_(False);self.window.center()
             self.window.setFloatingPanel_(True);self.window.setLevel_(3)
             view=self.window.contentView()
             def label(text,x,y,w,h):
@@ -665,7 +665,7 @@ class GraverSpacingControllerV22(NSObject):
             button('Pin selected spacing','pin:',16,291,210);button('Return selected to Auto','reset:',230,291,214)
             label('Manual spacing edits and kerning changes become overrides.',20,268,420,20).setFont_(NSFont.systemFontOfSize_(11))
             button('Replace existing kerning on this master','rebuild:',16,232,428)
-            label('Recalculates existing pairs. Keeps Graver pins. Can be undone.',20,209,420,20).setFont_(NSFont.systemFontOfSize_(11))
+            label('Recalculates existing pairs. Keeps Rigormortise pins. Can be undone.',20,209,420,20).setFont_(NSFont.systemFontOfSize_(11))
             label('Enabling Auto alone preserves existing authored kerning.',20,189,420,20).setFont_(NSFont.systemFontOfSize_(11))
             label('Optional comparison in separate files:',20,152,420,22)
             button('Create Stock + Contour preview','preview:',16,119,428)
@@ -674,4 +674,4 @@ class GraverSpacingControllerV22(NSObject):
             self.statusLabel=label(self.status,20,9,420,38);self.statusLabel.setFont_(NSFont.systemFontOfSize_(11))
         self.refreshPanel();self.window.makeKeyAndOrderFront_(None)
 
-GraverSpacingController = GraverSpacingControllerV22
+RigormortiseController = RigormortiseControllerV22

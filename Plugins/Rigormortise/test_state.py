@@ -1,6 +1,6 @@
 import sys,unittest
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'GraverSpacing.glyphsPlugin/Contents/Resources'))
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'Rigormortise.glyphsPlugin/Contents/Resources'))
 from spacing_state import *
 class Ownership(unittest.TestCase):
  def test_manual_delta(self):

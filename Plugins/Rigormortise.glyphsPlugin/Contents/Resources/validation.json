@@ -36,7 +36,7 @@
   "contourPreview": {
     "date": "2026-10-24",
     "passed": true,
-    "report": "Plugins/GraverSpacing/preview-validation.json"
+    "report": "Plugins/Rigormortise/preview-validation.json"
   },
   "directMaster": {
     "passed": true,

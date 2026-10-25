@@ -1,6 +1,6 @@
 import sys,unittest
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'GraverSpacing.glyphsPlugin/Contents/Resources'))
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'Rigormortise.glyphsPlugin/Contents/Resources'))
 from undo_state import state_delta,restore_state,pair_delta,metric_delta
 from spacing_state import initial_state
 class UndoTests(unittest.TestCase):

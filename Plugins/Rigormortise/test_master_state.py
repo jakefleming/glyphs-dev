@@ -3,11 +3,11 @@ import ast,json,sys,unittest
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
-RESOURCE=Path(__file__).resolve().parent.parent/'GraverSpacing.glyphsPlugin/Contents/Resources'
+RESOURCE=Path(__file__).resolve().parent.parent/'Rigormortise.glyphsPlugin/Contents/Resources'
 if not RESOURCE.exists():RESOURCE=Path(__file__).resolve().parent
 sys.path.insert(0,str(RESOURCE))
 from spacing_state import initial_state
-source=ast.parse((RESOURCE/'graver_spacing.py').read_text())
+source=ast.parse((RESOURCE/'rigormortise.py').read_text())
 names={'KEY','MASTER_KEY','PRESETS'}
 nodes=[n for n in source.body if isinstance(n,ast.FunctionDef) and n.name in {'selected_master','load_state','store_state'} or isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in names for t in n.targets)]
 ns={'json':json,'initial_state':initial_state};exec(compile(ast.Module(body=nodes,type_ignores=[]),'<state helpers>','exec'),ns)

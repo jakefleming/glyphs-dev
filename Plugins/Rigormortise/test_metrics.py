@@ -2,7 +2,7 @@
 import ast,unittest
 from pathlib import Path
 from types import SimpleNamespace as Obj
-path=Path(__file__).resolve().parent.parent/'GraverSpacing.glyphsPlugin/Contents/Resources/graver_spacing.py'
+path=Path(__file__).resolve().parent.parent/'Rigormortise.glyphsPlugin/Contents/Resources/rigormortise.py'
 function=next(n for n in ast.parse(path.read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='set_metrics')
 namespace={};exec(compile(ast.Module(body=[function],type_ignores=[]),str(path),'exec'),namespace)
 set_metrics=namespace['set_metrics']

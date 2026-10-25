@@ -4,7 +4,7 @@ Standard-library only; requires build_engine.py. No Glyphs document writes.
 import copy,json,subprocess,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
-BINARY=ROOT.parent/'GraverSpacing.glyphsPlugin/Contents/Resources/graver-spacing-engine'
+BINARY=ROOT.parent/'Rigormortise.glyphsPlugin/Contents/Resources/rigormortise-engine'
 class ContourTests(unittest.TestCase):
  @classmethod
  def setUpClass(cls):

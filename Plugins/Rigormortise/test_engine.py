@@ -2,7 +2,7 @@ import json,subprocess,statistics,time
 from pathlib import Path
 root=Path(__file__).parent
 req=json.load(open(root/'engine-request.json'))
-proc=subprocess.Popen([str(root.parent/'GraverSpacing.glyphsPlugin/Contents/Resources/graver-spacing-engine')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+proc=subprocess.Popen([str(root.parent/'Rigormortise.glyphsPlugin/Contents/Resources/rigormortise-engine')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
 def run(req):
  proc.stdin.write(json.dumps(req)+'\n');proc.stdin.flush();return json.loads(proc.stdout.readline())
 r=run(req)

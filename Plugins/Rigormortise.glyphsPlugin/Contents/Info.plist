@@ -7,17 +7,17 @@
 	<key>CFBundleExecutable</key>
 	<string>plugin</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.flemingfoundry.GraverSpacing</string>
+	<string>com.flemingfoundry.Rigormortise</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Graver Spacing</string>
+	<string>Rigormortise</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSPrincipalClass</key>
-	<string>GraverSpacing</string>
+	<string>Rigormortise</string>
 	<key>PyMainFileNames</key>
 	<array>
 		<string>plugin.py</string>
