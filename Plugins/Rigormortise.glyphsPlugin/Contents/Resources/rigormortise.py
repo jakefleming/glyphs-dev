@@ -6,7 +6,7 @@ from Foundation import NSObject, NSTimer, NSMakeRect, NSNotificationCenter
 from AppKit import (NSMenu, NSMenuItem, NSEvent, NSWindow, NSPanel, NSApplication, NSTextField, NSButton,
                     NSSlider, NSPopUpButton, NSFont, NSAlert, NSBackingStoreBuffered)
 from GlyphsApp import Glyphs, GSInstance, EDIT_MENU, UPDATEINTERFACE, Message
-from spacing_state import initial_state, detect_adjustments, update_pair_ownership, effective_authored
+from spacing_state import initial_state, detect_adjustments, update_pair_ownership, effective_authored, remember_baseline, observe_changes, adopt_spacing, remember_observation, compact_snapshot
 from undo_state import state_delta, restore_state, pair_delta, metric_delta
 
 KEY = 'com.flemingfoundry.graverSpacing.v1'
@@ -200,13 +200,13 @@ class Engine:
         if self.process and self.process.poll() is None: self.process.terminate()
 
 
-class RigormortiseUndoRecordV22(NSObject):
+class RigormortiseUndoRecordV25(NSObject):
     pass
 
 
-class RigormortiseControllerV22(NSObject):
+class RigormortiseControllerV25(NSObject):
     def init(self):
-        self=objc.super(RigormortiseControllerV22,self).init()
+        self=objc.super(RigormortiseControllerV25,self).init()
         if self is None: return None
         self.engine=Engine();self.sessions={};self.pending=None;self.serial=0
         self.changedAt=0;self.dirty=True;self.force=False;self.applying=False
@@ -284,6 +284,13 @@ class RigormortiseControllerV22(NSObject):
                 if NSEvent.pressedMouseButtons() or fingerprint(live)!=pending['signature'] or target['state']!=pending['expectedState']:
                     target['force']=True;self.dirty=True;self.changedAt=time.monotonic();return
                 if 'error' in result: raise RuntimeError(result['error'])
+                if pending['state'].get('adoptPending'):
+                    state=adopt_spacing(pending['state'],live,result['metrics'])
+                    self.serial+=1
+                    self.pending=dict(pending,token=self.serial,state=state,started=time.monotonic())
+                    self.engine.requests.put((self.serial,request_for(live,state)))
+                    self.setStatus('Remembering your starting spacing…')
+                    return
                 self.apply(font,live,result,pending['state'])
                 return
             font=current_font()
@@ -302,15 +309,15 @@ class RigormortiseControllerV22(NSObject):
             self.dirty=False
             if signature==s['signature'] and not force: return
             state=copy.deepcopy(s['state'])
-            if s['last']:
-                detect_adjustments(state,s['last']['glyphs'],now['glyphs'])
-            update_pair_ownership(state,now['pairs'])
+            remember_baseline(state,now)
+            observe_changes(state,now)
             changed=None
-            if s['last'] and not force and all(now[k]==s['last'][k] for k in ('xHeight','capHeight','slant','groups')):
+            if s['last'] and not state.get('adoptPending') and not force and all(now[k]==s['last'][k] for k in ('xHeight','capHeight','slant','groups')):
                 changed=[n for n,g in now['glyphs'].items() if g!=s['last']['glyphs'].get(n)]
                 # Manual pair edits need no recomputation, but save their ownership.
                 if not changed:
                     oldstate=copy.deepcopy(s['state'])
+                    remember_observation(state,now)
                     s.update(state=state,last=now,signature=signature);self.persist(s)
                     self.registerChange(font,now,now,oldstate,state)
                     return
@@ -338,7 +345,7 @@ class RigormortiseControllerV22(NSObject):
         pairs=pair_delta(before['pairs'],after['pairs'])
         state=state_delta(oldstate,newstate)
         if not (metrics or pairs or state):return
-        record=RigormortiseUndoRecordV22.alloc().init()
+        record=RigormortiseUndoRecordV25.alloc().init()
         record.font=font;record.master=before['master'];record.metrics=metrics;record.pairs=pairs;record.state=state
         record.manager=manager if manager is not None else self.undoManager(font)
         m=record.manager
@@ -373,6 +380,7 @@ class RigormortiseControllerV22(NSObject):
         for s in self.sessions.values():
             if s.get('settlingUndo') and s['font'] in Glyphs.fonts and any(m.id==s['master'] for m in s['font'].masters):
                 now=snapshot(s['font'],s['master']);s.update(last=now,signature=fingerprint(now),settlingUndo=False)
+                remember_observation(s['state'],now);self.persist(s)
         self.pending=None;self.force=False;self.dirty=False
         self.setStatus('Auto on — follows your next edit' if current_font() and self.session(current_font())['state']['enabled'] else 'Off — current spacing retained')
         self.refreshPanel()
@@ -401,6 +409,9 @@ class RigormortiseControllerV22(NSObject):
                 values={side:old for side,(old,new) in patch['sides'].items()
                         if not live['lock'+side.title()] and abs(live[side]-new)<.01}
                 if values:set_metrics(font.glyphs[name].layers[record.master],**values)
+                if ('width' in patch and len(values)==len(patch['sides']) and not live['lockLeft'] and not live['lockRight']
+                    and abs(live['width']-patch['width'][1])<.01):
+                    font.glyphs[name].layers[record.master].width=patch['width'][0]
             for key,(old,new) in record.pairs.items():
                 if before['pairs'].get(key)!=new:continue
                 a,b=key.split('\t')
@@ -420,17 +431,21 @@ class RigormortiseControllerV22(NSObject):
     def apply(self,font,snap,result,state):
         s=self.session(font,snap['master']);oldstate=copy.deepcopy(s.get('beforeSetting',s['state']))
         s.pop('beforeSetting',None)
+        preserve=state.pop('preserveEnrollmentMetrics',False)
         changed=False
         def mutate():
             nonlocal changed
             for name,value in result['metrics'].items():
+                if preserve:continue
                 g=font.glyphs[name];layer=g.layers[snap['master']];old=snap['glyphs'][name]
                 left=None if old['lockLeft'] else value['left']
                 right=None if old['lockRight'] else value['right']
                 if (left is not None and abs(old['left']-left)>0.51) or (right is not None and abs(old['right']-right)>0.51):
                     set_metrics(layer,left,right);changed=True
             managed=state['managedPairs'];pinned=state['pinnedPairs']
-            raw=snap['pairs']
+            raw=dict(snap['pairs'])
+            # Deleted class/mixed pairs also protect their covered glyph pairs.
+            raw.update(pinned)
             if s.pop('replaceKerning',False):
                 # Explicit one-shot takeover, in the same undo record as spacing.
                 # Existing Rigormortise pins survive, including zero-valued pins.
@@ -455,6 +470,7 @@ class RigormortiseControllerV22(NSObject):
             for key in list(managed):
                 if any(n not in snap['glyphs'] for n in key.split('\t')):
                     a,b=key.split('\t');font.removeKerningForPair(snap['master'],a,b);del managed[key];changed=True
+            remember_observation(state,snapshot(font,snap['master']))
             s['state']=state;self.persist(s)
         self.withoutNativeUndo(font,mutate)
         now=snapshot(font,snap['master'])
@@ -470,6 +486,10 @@ class RigormortiseControllerV22(NSObject):
     def enable(self,font,space=None):
         s=self.session(font)
         if 'beforeSetting' not in s:s['beforeSetting']=copy.deepcopy(s['state'])
+        now=snapshot(font,s['master'])
+        if not s['state']['enabled']:s['state']['adoptPending']=True
+        remember_baseline(s['state'],now);observe_changes(s['state'],now)
+        remember_observation(s['state'],now)
         if space is not None:s['state']['space']=max(4,min(200,float(space)))
         self.active=True
         s['state']['enabled']=True;self.persist(s);s['force']=True;self.changedAt=0
@@ -480,6 +500,7 @@ class RigormortiseControllerV22(NSObject):
         s=self.session(font)
         if s['state']['enabled']:
             oldstate=copy.deepcopy(s['state']);now=snapshot(font,s['master'])
+            observe_changes(s['state'],now);remember_observation(s['state'],now)
             s['state']['enabled']=False;s['force']=False;s.pop('replaceKerning',None);s.pop('beforeSetting',None)
             self.persist(s);self.registerChange(font,now,now,oldstate,s['state'])
             self.setStatus('Off — current spacing is retained')
@@ -529,8 +550,7 @@ class RigormortiseControllerV22(NSObject):
         sourceState=copy.deepcopy(sourceSession['state'])
         if sourceSession['last'] is not None:
             live=snapshot(source)
-            detect_adjustments(sourceState,sourceSession['last']['glyphs'],live['glyphs'])
-            update_pair_ownership(sourceState,live['pairs'])
+            observe_changes(sourceState,live)
         copies=[]
         for mode in ('Stock','Contour'):
             font=source.copy()
@@ -557,6 +577,7 @@ class RigormortiseControllerV22(NSObject):
                 a,b=key.split('\t')
                 if (a.startswith('@') or font.glyphs[a]) and (b.startswith('@') or font.glyphs[b]):
                     font.setKerningForPair(master.id,a,b,value)
+            state['baseline']=compact_snapshot(snapshot(font,master.id))
             store_state(font,state)
             font.userData[PREVIEW_KEY]=json.dumps(dict(source=str(source.filepath or source.familyName),
                 master=master.id,preset=preset,mode=mode))
@@ -614,13 +635,46 @@ class RigormortiseControllerV22(NSObject):
         # Capture any manual changes before replacing generated kerning.
         now=snapshot(font,s['master'])
         if 'beforeSetting' not in s:s['beforeSetting']=copy.deepcopy(s['state'])
-        if s['last']:detect_adjustments(s['state'],s['last']['glyphs'],now['glyphs'])
-        update_pair_ownership(s['state'],now['pairs'])
+        remember_baseline(s['state'],now);observe_changes(s['state'],now)
+        remember_observation(s['state'],now)
         s['last']=now
         s['replaceKerning']=True
         self.pending=None
         self.enable(font);self.refreshPanel()
         self.setStatus('Rebuilding this master; Rigormortise pins will stay. Undo available.')
+
+    def restoreBaseline_(self,sender):
+        font=current_font()
+        if not font:return
+        s=self.session(font);baseline=s['state'].get('baseline')
+        if not baseline:
+            self.setStatus('No starting baseline saved yet. Enable Auto to capture it.')
+            return
+        before=snapshot(font,s['master']);oldstate=copy.deepcopy(s['state'])
+        self.pending=None;s['force']=False;s.pop('beforeSetting',None);s.pop('replaceKerning',None)
+        def restore():
+            for name,value in baseline['glyphs'].items():
+                live=before['glyphs'].get(name)
+                if live is None:continue
+                left=None if live['lockLeft'] else value['left']
+                right=None if live['lockRight'] else value['right']
+                set_metrics(font.glyphs[name].layers[s['master']],left,right)
+                if live['shape']==value['shape'] and not live['lockLeft'] and not live['lockRight']:
+                    font.glyphs[name].layers[s['master']].width=value['width']
+            for key in before['pairs']:
+                a,b=key.split('\t');font.removeKerningForPair(s['master'],a,b)
+            for key,value in baseline['pairs'].items():
+                a,b=key.split('\t')
+                if (a.startswith('@') or font.glyphs[a]) and (b.startswith('@') or font.glyphs[b]):
+                    font.setKerningForPair(s['master'],a,b,value)
+            s['state'].update(enabled=False,overrides={},managedPairs={},pinnedPairs={},adoptPending=True)
+            remember_observation(s['state'],snapshot(font,s['master']));self.persist(s)
+        self.withoutNativeUndo(font,restore)
+        after=snapshot(font,s['master'])
+        self.registerChange(font,before,after,oldstate,s['state'])
+        s.update(last=after,signature=fingerprint(after))
+        self.dirty=False;self.force=False
+        self.refreshPanel();self.setStatus('Starting spacing + kerning restored. Auto is off.');Glyphs.redraw()
 
     @objc.python_method
     def refreshPanel(self):
@@ -640,7 +694,7 @@ class RigormortiseControllerV22(NSObject):
 
     def showPanel_(self,sender):
         if not self.window:
-            self.window=NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0,0,460,535),3,NSBackingStoreBuffered,False)
+            self.window=NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0,0,460,585),3,NSBackingStoreBuffered,False)
             self.window.setTitle_('Rigormortise');self.window.setReleasedWhenClosed_(False);self.window.center()
             self.window.setFloatingPanel_(True);self.window.setLevel_(3)
             view=self.window.contentView()
@@ -672,6 +726,9 @@ class RigormortiseControllerV22(NSObject):
             label('Uses this master and the selected calibration above.',20,96,420,20).setFont_(NSFont.systemFontOfSize_(11))
             button('View Stock','showStock:',16,58,138);button('View Contour','showContour:',158,58,142);button('Back to source','showSource:',304,58,140)
             self.statusLabel=label(self.status,20,9,420,38);self.statusLabel.setFont_(NSFont.systemFontOfSize_(11))
+            for item in list(view.subviews()):
+                frame=item.frame();frame.origin.y+=50;item.setFrame_(frame)
+            button('Restore starting spacing + kerning','restoreBaseline:',16,9,428)
         self.refreshPanel();self.window.makeKeyAndOrderFront_(None)
 
-RigormortiseController = RigormortiseControllerV22
+RigormortiseController = RigormortiseControllerV25

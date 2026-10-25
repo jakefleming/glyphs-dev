@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-25",
+  "passed": true,
+  "native": {
+    "firstEnableKeepsExactMetrics": true,
+    "existingPairAndZeroPreserved": true,
+    "classPairNotShadowed": true,
+    "baselineStored": true,
+    "otherMasterUnchanged": true,
+    "offEditsRetainedOnReenable": true,
+    "deletedPairRemembered": true,
+    "deletedClassPairNotShadowed": true,
+    "baselineNotReplaced": true,
+    "saveReopenRetainsBaselineAndOverrides": true,
+    "restoreExact": true,
+    "restoreDisablesAuto": true,
+    "restoreUndoExact": true,
+    "restoreRedoExact": true,
+    "sourceUnchanged": true,
+    "allPassed": true
+  },
+  "pureTests": 34
+}

@@ -7,6 +7,7 @@ A local, always-on spacing adapter for Glyphs 3.4.1. Open **Edit → Rigormortis
 ## Controls
 
 - Target space controls the overall rhythm. Sidebearings and affected pairs follow outline changes after a short idle period.
+- Enabling Auto remembers the current spacing and kerning for that master. Initial sidebearings become adjustments relative to the automatic result, so later outline changes can still adapt.
 - A manual sidebearing change becomes an adjustment relative to the automatic result.
 - Pin selected spacing retains exact left/right bearings. Return selected to Auto clears those sidebearing overrides.
 - Manually entered or deleted kerning is retained as an override; existing glyph, mixed, and class kerning is respected.
@@ -38,6 +39,7 @@ The worker is a persistent local Swift process. It caches outline profiles, comp
 python3 build_engine.py
 python3 test_master_state.py
 python3 test_state.py
+python3 test_baseline.py
 python3 test_undo_state.py
 python3 test_metrics.py
 python3 test_engine.py
@@ -137,3 +139,35 @@ Rigormortise was previously named Graver Spacing. The document metadata keys
 remain unchanged so existing enable states, calibrations, manual adjustments
 and kerning ownership continue to load without conversion. Remove the old
 plugin bundle when installing the renamed bundle to avoid duplicate menus.
+
+
+## Remembering your starting spacing (2026-10-25)
+
+The first activation saves an immutable baseline for each master in the font's
+metadata: eligible glyph sidebearings/widths and the complete master kerning table.
+It keeps the exact initial metrics, including fractional widths. Authored glyph,
+mixed, class and zero kerning remain protected. Automatic kerning can fill pairs
+that have no authored value.
+
+Initial sidebearings are retained as offsets from the calculated result. Outline
+edits can therefore adjust spacing without discarding your starting decisions.
+**Return selected to Auto** clears those offsets for selected glyphs; **Pin
+selected spacing** holds exact bearings instead. New eligible glyphs added while
+Auto is running receive automatic spacing.
+
+The last applied state also persists in the document. Manual spacing and kerning
+changes made with Auto off are recognized on re-enabling, including pair deletions.
+Re-enabling retains the current metrics; it does not replace the original baseline.
+Save the font to retain this memory across closing/reopening.
+
+**Restore starting spacing + kerning** restores the saved bearings and kerning,
+clears current Rigormortise overrides, and turns Auto off. It is undoable. Outlines
+are not restored: current shapes and metrics links remain authoritative, deleted
+glyphs are skipped, and exact starting widths are restored when shapes are unchanged.
+The saved baseline remains available after restoration.
+
+Existing installations capture their current values on the next activation/update;
+values overwritten before this feature cannot be recovered automatically. The
+optional Stock/Contour comparison still deliberately calculates new spacing in its
+copies. Native capture, off/on, save/reopen, restore and Undo/Redo checks are recorded
+in `baseline-validation.json`.

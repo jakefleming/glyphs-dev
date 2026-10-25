@@ -27,7 +27,7 @@
     "engine": "deterministic, incremental pairs, fixed-side precedence, italic input"
   },
   "limitations": [
-    "Experimental single-master Latin version",
+    "Experimental Latin version; single- and multi-master workflows tested",
     "Automatic spacing adds a separate Undo step",
     "No synchronization with export launched during pending calculation",
     "Generated kerning is individual pairs, not class-packed",
@@ -66,5 +66,10 @@
       "switchChangesPanel": true,
       "allPassed": true
     }
+  },
+  "baseline": {
+    "date": "2026-10-25",
+    "passed": true,
+    "report": "Plugins/Rigormortise/baseline-validation.json"
   }
 }

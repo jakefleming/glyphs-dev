@@ -21,4 +21,8 @@ class UndoTests(unittest.TestCase):
   a={'n':{'shape':'a','left':10,'right':20},'o':{'shape':'b','left':2,'right':3}}
   b={'n':{'shape':'new','left':12,'right':20},'o':{'shape':'b','left':2,'right':8}}
   self.assertEqual(metric_delta(a,b),{'o':{'shape':'b','sides':{'right':(3,8)}}})
+ def test_fractional_width_is_retained_in_patch(self):
+  a={'n':{'shape':'a','left':10.25,'right':20.375,'width':500.625}}
+  b={'n':{'shape':'a','left':29.25,'right':20.75,'width':520.0}}
+  self.assertEqual(metric_delta(a,b)['n']['width'],(500.625,520.0))
 unittest.main()

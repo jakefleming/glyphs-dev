@@ -35,5 +35,8 @@ def metric_delta(before,after):
         b=after.get(name)
         if not b or a['shape']!=b['shape']:continue
         sides={side:(a[side],b[side]) for side in ('left','right') if abs(a[side]-b[side])>.001}
-        if sides:result[name]={'shape':a['shape'],'sides':sides}
+        if sides:
+            result[name]={'shape':a['shape'],'sides':sides}
+            if 'width' in a and 'width' in b and a['width']!=b['width']:
+                result[name]['width']=(a['width'],b['width'])
     return result
