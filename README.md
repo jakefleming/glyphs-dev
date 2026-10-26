@@ -35,13 +35,22 @@ ones. Check tight joins and small counters when making large changes.
 
 ### Curse
 
-[Curse](Plugins/Curse.glyphsFilter) makes an optically corrected oblique. Open
-**Filter → Curse**, set the angle, and adjust the corrections for curves,
-diagonals, stems and terminals. **Keep nodes on extremes** adjusts vertical
-extrema after slanting.
+[Curse](Plugins/Curse.glyphsFilter) makes an optically corrected oblique.
+Select glyphs and choose **Filter → Curse**. Set **Angle**, then use **Balance**
+to blend between a plain slant and the corrected shape. Negative angles lean
+left. The preview starts from the original each time you change a value.
 
-It transforms the existing outlines. It won't draw a new italic `a` or `g` for
-you. Curves and joins still need inspection after applying it.
+**Fine tune…** opens four controls: **Rounds**, **Diagonals**, **Stem weight**
+and **Endings**. They adjust curve tension, straight diagonal weight, vertical
+stem weight and the amount of curve adjustment at detected stroke endings.
+**Refit extrema** tries to return nodes to vertical extrema within a small
+shape tolerance. Balance also scales the round, diagonal and stem adjustments.
+At zero, it produces a plain slant, rounded to the font's grid.
+
+Curse keeps node counts, node types and advance widths. It works on cubic
+outlines; decompose components in a copy first. Open paths receive a plain
+slant. It won't draw a new italic `a` or `g`. Check tight joins and tails after
+applying it. Cancel restores the original; Apply is undoable.
 
 ### lil Devil
 
@@ -123,5 +132,6 @@ Curse has a regression harness that runs outside Glyphs:
 python3 Scripts/_makeitalic_harness.py
 ```
 
-It currently reports four failures against its saved baseline. Inspect its
-output as well as the process exit status.
+The tests use synthetic outlines and check geometry, signed angles, invalid
+input and export parameters. Native preview, Cancel, Apply, Undo and Redo
+checks are recorded in `Plugins/Curse/native-validation.json`.

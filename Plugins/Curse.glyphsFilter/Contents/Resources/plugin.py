@@ -1,36 +1,19 @@
 # encoding: utf-8
 from __future__ import division, print_function, unicode_literals
 
-"""
-Curse — optically corrected oblique.
+"""Curse: slant outlines, rebalance curves, and correct straight-stroke weight.
 
-Curve correction (the core, same construction Italify uses):
-  work on the UPRIGHT outline first, then slant. Every cubic is extended
-  (as the same polynomial) to the implicit horizontal/vertical extremes
-  beyond its ends when it does not end on one; the extended arc's two end
-  tangent lines meet at a corner C. All four control points of the extended
-  arc are scaled about C by f = 1 + s*theta_rad*curve, where s = +1 if C lies
-  in a "/" quadrant relative to the arc (bottom-left / top-right) and -1 in a
-  "\\" quadrant. The original segment is then clipped back out of the
-  corrected extended arc (re-intersected with an adjoining straight line if
-  there is one). Net effect after the slant: bowls come out rotated by about
-  half the angle instead of sheared. Nodes shared by two arcs take the
-  smaller of the two proposals. Lines are untouched here.
-
-Keep terminals: caps / terminals (arcs whose ray cast does not land on the
-  opposite side of their own stroke) get their curve correction faded out.
-Diagonal correction: straight diagonal segments get their perpendicular
-  stroke width restored after the slant (delta = w*(1 - 1/|S t|)).
-Stem compensation: the same for near-vertical straight segments.
-Keep nodes on extremes: put vertical extremes back after the slant.
+Curve endpoints move along their tangents, with limits from neighbouring
+segments. Implicit extrema supply the bounds for incomplete arcs. Nearly
+parallel tangents and excessive extrapolation are excluded. Straight-stroke
+correction uses the perpendicular width measured in the upright outline.
 """
 
 import objc
 import math
-import traceback
 from GlyphsApp import Glyphs, GSPath, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
-from AppKit import NSView, NSSlider, NSTextField, NSButton, NSMakeRect, NSFont
+from AppKit import NSView, NSSlider, NSTextField, NSButton, NSMakeRect, NSFont, NSPopover, NSViewController
 from Foundation import NSMakePoint
 
 FLAT = 12         # polyline pieces per curve for ray casts
@@ -38,6 +21,8 @@ AXIS_TOL = 0.035  # |sin| below this counts as an axis-aligned tangent (~2 deg)
 EXT_LIMIT = 4.0   # max extension in units of segment parameter
 WIDTH_CAP = 1.5   # local half-width clamp (x median) for the line corrections
 EXTREME_TOL = 2.0 # keep-extremes: max outline deviation allowed when re-placing a node
+EXTREME_SLIDE = 0.45  # keep-extremes: max slide, as a fraction of the host segment's chord
+CORNER_FAR = 1.5      # corner farther than this x chord = near-parallel tangents: no correction
 
 
 # ---------------------------------------------------------------- geometry
@@ -146,22 +131,73 @@ def _extremeParams(C):
 	return out
 
 
-def _extend(C):
-	"""Extend a cubic to its implicit extremes: returns (t0, t1) with t0<=0,
-	t1>=1 such that the tangents at t0 and t1 are axis-aligned when such
-	extremes exist within EXT_LIMIT; otherwise the end stays where it is."""
+def _inflections(C):
+	"""Parameters where the cubic's curvature is zero: cross(D, D') = 0."""
+	# D(t) = 3[(1-t)^2 a + 2(1-t)t b + t^2 c], with a=P1-P0, b=P2-P1, c=P3-P2
+	ax, ay = C[1][0] - C[0][0], C[1][1] - C[0][1]
+	bx, by = C[2][0] - C[1][0], C[2][1] - C[1][1]
+	cx, cy = C[3][0] - C[2][0], C[3][1] - C[2][1]
+	# cross(D, D') is quadratic in t: k0 + k1 t + k2 t^2 (up to a constant)
+	# D = a + 2t(b-a) + t^2(a-2b+c);  D' = 2(b-a) + 2t(a-2b+c)
+	ux, uy = bx - ax, by - ay
+	vx, vy = ax - 2 * bx + cx, ay - 2 * by + cy
+	# D = a + 2t u + t^2 v ; D' = 2u + 2t v
+	# cross(D, D') = 2[cross(a,u) + t cross(a,v) + t^2 cross(u,v)]  (t^2 terms from cross(u,v) with 2t*t)
+	k0 = ax * uy - ay * ux
+	k1 = ax * vy - ay * vx
+	k2 = ux * vy - uy * vx
+	out = []
+	if abs(k2) < 1e-12:
+		if abs(k1) > 1e-12:
+			out.append(-k0 / k1)
+		return out
+	disc = k1 * k1 - 4 * k2 * k0
+	if disc < 0:
+		return out
+	r = math.sqrt(disc)
+	out.append((-k1 - r) / (2 * k2))
+	out.append((-k1 + r) / (2 * k2))
+	return out
+
+
+EXT_EXTERNAL_LIMIT = 1.0  # inflection ("external") extensions: at most one segment-length
+
+
+def _extend(C, bounds=None):
+	"""Extend a cubic beyond an end whose tangent is not axis-aligned:
+	to the implicit extreme (x'=0 or y'=0) if one exists within EXT_LIMIT,
+	otherwise to the inflection point (where the tangent stops approaching
+	the axis) within EXT_EXTERNAL_LIMIT -- the "external extension". Either
+	way the extended point must stay inside `bounds` (xmin, ymin, xmax, ymax)
+	when given. Returns (t0, t1), t0<=0<=1<=t1."""
 	t0, t1 = 0.0, 1.0
 	dA = _unit(*_bezD(C, 0.0))
 	dB = _unit(*_bezD(C, 1.0))
 	roots = _extremeParams(C)
+	infl = _inflections(C)
+
+	def inside(t):
+		if bounds is None:
+			return True
+		x, y = _bez(C, t)
+		return bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
+
 	if _axisKind(dA) is None:
-		cands = [r for r in roots if r < -1e-6 and r >= -EXT_LIMIT]
+		cands = [r for r in roots if r < -1e-6 and r >= -EXT_LIMIT and inside(r)]
 		if cands:
 			t0 = max(cands)
+		else:
+			cands = [r for r in infl if r < -1e-6 and r >= -EXT_EXTERNAL_LIMIT and inside(r)]
+			if cands:
+				t0 = max(cands)
 	if _axisKind(dB) is None:
-		cands = [r for r in roots if r > 1 + 1e-6 and r <= 1 + EXT_LIMIT]
+		cands = [r for r in roots if r > 1 + 1e-6 and r <= 1 + EXT_LIMIT and inside(r)]
 		if cands:
 			t1 = min(cands)
+		else:
+			cands = [r for r in infl if r > 1 + 1e-6 and r <= 1 + EXT_EXTERNAL_LIMIT and inside(r)]
+			if cands:
+				t1 = min(cands)
 	return t0, t1
 
 
@@ -232,103 +268,125 @@ class MakeItalic(FilterWithDialog):
 	def settings(self):
 		self.menuName = "Curse"
 		self.actionButtonLabel = "Apply"
+		self._angle = 12.0
+		self._fields = {}
+		self._values = {'curve': 100., 'terminals': 0., 'diagonal': 100., 'stem': 0.}
+		W = 340
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 178))
 
-		W = 300
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 300))
-		self._rows = {}
-
-		def label(text, y, size=12, alpha=1.0):
-			f = NSTextField.alloc().initWithFrame_(NSMakeRect(14, y, W - 100, 18))
+		def label(text, x, y, w, parent=view, size=12):
+			f = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, 20))
 			f.setStringValue_(text)
 			f.setBezeled_(False)
 			f.setDrawsBackground_(False)
 			f.setEditable_(False)
 			f.setSelectable_(False)
 			f.setFont_(NSFont.systemFontOfSize_(size))
-			if alpha < 1.0:
-				f.setTextColor_(f.textColor().colorWithAlphaComponent_(alpha))
-			view.addSubview_(f)
+			parent.addSubview_(f)
 			return f
 
-		def field(y, text, w=54):
-			f = NSTextField.alloc().initWithFrame_(NSMakeRect(W - 14 - w, y, w, 21))
-			f.setStringValue_(text)
+		def field(value, x, y, parent=view):
+			f = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, 62, 22))
+			f.setStringValue_(value)
 			f.setAlignment_(1)
-			f.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(12, 0.0))
 			f.setTarget_(self)
 			f.setAction_("fieldChanged:")
-			view.addSubview_(f)
+			parent.addSubview_(f)
 			return f
 
-		def row(key, title, y, lo, hi, val, suffix):
-			label(title, y + 24)
-			s = NSSlider.alloc().initWithFrame_(NSMakeRect(14, y, W - 90, 20))
-			s.setMinValue_(lo)
-			s.setMaxValue_(hi)
-			s.setDoubleValue_(val)
-			s.setContinuous_(True)
-			s.setTarget_(self)
-			s.setAction_("sliderChanged:")
-			view.addSubview_(s)
-			f = field(y, "%d%s" % (val, suffix))
-			self._rows[key] = (s, f, suffix, val)
+		self._mainView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 178))
+		view.addSubview_(self._mainView)
+		label("Angle", 16, 139, 160, self._mainView)
+		self.angleField = field("12°", 262, 138, self._mainView)
+		self.angleField.setToolTip_("Degrees to add. Negative values lean left.")
+		label("Balance", 16, 107, 160, self._mainView)
+		self.balanceField = field("100%", 262, 82, self._mainView)
+		self.balanceSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 82, 232, 22))
+		self.balanceSlider.setMinValue_(0)
+		self.balanceSlider.setMaxValue_(100)
+		self.balanceSlider.setDoubleValue_(100)
+		self.balanceSlider.setContinuous_(False)
+		self.balanceSlider.setTarget_(self)
+		self.balanceSlider.setAction_("balanceChanged:")
+		self.balanceSlider.setToolTip_("Blend from a plain slant to the corrected outline.")
+		self._mainView.addSubview_(self.balanceSlider)
+		self.detailButton = NSButton.alloc().initWithFrame_(NSMakeRect(12, 45, 160, 24))
+		self.detailButton.setButtonType_(0)
+		self.detailButton.setBezelStyle_(0)
+		self.detailButton.setTitle_("Fine tune…")
+		self.detailButton.setTarget_(self)
+		self.detailButton.setAction_("toggleDetails:")
+		self._mainView.addSubview_(self.detailButton)
+		self.status = label("Preview the selected outlines, then Apply.", 16, 10, 310, self._mainView, 11)
 
-		# angle: value field only, like the reference
-		label("Angle", 268)
-		self.angleField = field(266, "12°")
-		self._angle = 12.0
-
-		row('curve', "Curve correction", 216, 0, 150, 100, "%")
-		row('terminals', "Keep terminals", 168, 0, 100, 0, "%")
-		row('diagonal', "Diagonal correction", 108, 0, 150, 100, "%")
-		row('stem', "Stem compensation", 60, 0, 150, 0, "%")
-
-		self.vertCheck = NSButton.alloc().initWithFrame_(NSMakeRect(14, 22, W - 28, 20))
+		self._detailView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 142))
+		for key, title, x, y in [('curve', 'Rounds', 16, 106), ('diagonal', 'Diagonals', 178, 106),
+				('stem', 'Stem weight', 16, 66), ('terminals', 'Endings', 178, 66)]:
+			label(title, x, y + 18, 140, self._detailView, 11)
+			self._fields[key] = field("%g%%" % self._values[key], x, y - 4, self._detailView)
+		self._fields['curve'].setToolTip_("Curve rebalance before slanting, 0–150%.")
+		self._fields['diagonal'].setToolTip_("Restore perpendicular width of straight diagonals, 0–150%.")
+		self._fields['stem'].setToolTip_("Restore perpendicular width of straight vertical stems, 0–150%.")
+		self._fields['terminals'].setToolTip_("Reduce curve adjustment at detected stroke endings, 0–100%.")
+		self.vertCheck = NSButton.alloc().initWithFrame_(NSMakeRect(12, 18, 310, 24))
 		self.vertCheck.setButtonType_(3)
-		self.vertCheck.setTitle_("Keep nodes on extremes")
+		self.vertCheck.setTitle_("Refit extrema")
 		self.vertCheck.setState_(0)
+		self.vertCheck.setToolTip_("Move eligible nodes back to vertical extrema within a small shape tolerance.")
 		self.vertCheck.setTarget_(self)
-		self.vertCheck.setAction_("sliderChanged:")
-		view.addSubview_(self.vertCheck)
-
+		self.vertCheck.setAction_("balanceChanged:")
+		self._detailView.addSubview_(self.vertCheck)
+		self._detailController = NSViewController.alloc().init()
+		self._detailController.setView_(self._detailView)
+		self._popover = NSPopover.alloc().init()
+		self._popover.setContentViewController_(self._detailController)
+		self._popover.setBehavior_(1)
 		self.dialog = view
 
 	@objc.python_method
 	def start(self):
 		try:
-			ia = Glyphs.font.selectedFontMaster.italicAngle
-			if ia and 0 < abs(ia) <= 45:
-				self._angle = abs(ia)
-				self.angleField.setStringValue_("%g°" % round(self._angle, 1))
+			ia = float(Glyphs.font.selectedFontMaster.italicAngle)
+			if math.isfinite(ia) and 0 < abs(ia) <= 35:
+				self._angle = ia
+				self.angleField.setStringValue_("%g°" % ia)
 		except Exception:
 			pass
 
 	@objc.python_method
 	def val(self, key):
-		return self._rows[key][0].doubleValue()
+		v = self._values[key]
+		return v if key == 'terminals' else v * self.balanceSlider.doubleValue() / 100.
 
-	def sliderChanged_(self, sender):
-		for key, (s, f, suffix, _d) in self._rows.items():
-			f.setStringValue_("%d%s" % (round(s.doubleValue()), suffix))
+	def toggleDetails_(self, sender):
+		if self._popover.isShown():
+			self._popover.close()
+		else:
+			self._popover.showRelativeToRect_ofView_preferredEdge_(sender.bounds(), sender, 1)
+
+	def balanceChanged_(self, sender):
+		self.balanceField.setStringValue_("%g%%" % round(self.balanceSlider.doubleValue()))
 		self.update()
 
 	def fieldChanged_(self, sender):
-		raw = sender.stringValue().replace("°", "").replace("%", "").strip()
 		try:
-			v = float(raw)
-		except ValueError:
-			self.sliderChanged_(sender)
-			self.angleField.setStringValue_("%g°" % round(self._angle, 1))
-			return
-		if sender is self.angleField:
-			self._angle = max(0.0, min(45.0, v))
-			self.angleField.setStringValue_("%g°" % round(self._angle, 1))
-			self.update()
-			return
-		for key, (s, f, suffix, _d) in self._rows.items():
-			if sender is f:
-				s.setDoubleValue_(max(s.minValue(), min(s.maxValue(), v)))
-		self.sliderChanged_(sender)
+			v = float(sender.stringValue().replace("°", "").replace("%", "").strip())
+			if not math.isfinite(v):
+				raise ValueError("Enter a finite number")
+			if sender is self.angleField:
+				self._angle = max(-35., min(35., v))
+			elif sender is self.balanceField:
+				self.balanceSlider.setDoubleValue_(max(0., min(100., v)))
+			else:
+				for key, f in self._fields.items():
+					if sender is f:
+						self._values[key] = max(0., min(100. if key == 'terminals' else 150., v))
+		except (ValueError, TypeError):
+			pass
+		self.angleField.setStringValue_("%g°" % self._angle)
+		for key, f in self._fields.items():
+			f.setStringValue_("%g%%" % self._values[key])
+		self.balanceChanged_(sender)
 
 	# ------------------------------------------------------------ analysis
 
@@ -364,6 +422,18 @@ class MakeItalic(FilterWithDialog):
 
 	@objc.python_method
 	def italicize(self, layer, angleDeg, curve, keepTerm, diag, stem, restoreVerticals):
+		values = (angleDeg, curve, keepTerm, diag, stem)
+		if not all(math.isfinite(v) for v in values) or abs(angleDeg) > 45:
+			raise ValueError("Use a finite angle between −45° and 45°")
+		if any(not isinstance(shape, GSPath) for shape in layer.shapes):
+			raise ValueError("Decompose components in a copy before using Curse")
+		for path in layer.shapes:
+			if any(n.type not in (LINE, CURVE, OFFCURVE) for n in path.nodes):
+				raise ValueError("Curse needs cubic or straight outlines")
+			if any(not math.isfinite(v) for n in path.nodes for v in (n.position.x, n.position.y)):
+				raise ValueError("Outline contains a non-finite coordinate")
+			if path.closed and self.pathSegments(path) is None:
+				raise ValueError("Outline contains an incomplete curve")
 		th = math.radians(angleDeg)
 		if abs(th) < 1e-6:
 			return
@@ -476,6 +546,14 @@ class MakeItalic(FilterWithDialog):
 						verticalNodes.append((path, i))
 
 		# ================= 1. curve correction on the upright =================
+		# extension bounds: the glyph's box, grown by half its size each way
+		extBounds = None
+		allPts = [(n.position.x, n.position.y) for p in closed for n in p.nodes]
+		if allPts:
+			xs = [q[0] for q in allPts]
+			ys = [q[1] for q in allPts]
+			gw, gh = max(xs) - min(xs), max(ys) - min(ys)
+			extBounds = (min(xs) - 0.5 * gw, min(ys) - 0.5 * gh, max(xs) + 0.5 * gw, max(ys) + 0.5 * gh)
 		if curve > 0:
 			for path, segs in zip(closed, pathSegs):
 				if segs is None:
@@ -485,12 +563,28 @@ class MakeItalic(FilterWithDialog):
 				proposals = {}   # node index -> list of (dx, dy)
 				handleMove = {}  # offcurve index -> (dx, dy, nodeIndex, nodeOwnProposal)
 
+				# pre-compute each curve segment's extended arc, so neighbours can
+				# refer to the tangent at its implicit extreme (its corner leg)
+				extCache = {}
+				for si, seg in enumerate(segs):
+					if seg['c1'] is None:
+						continue
+					C = (seg['A'], seg['c1'], seg['c2'], seg['B'])
+					t0, t1 = _extend(C, extBounds)
+					E = _sub(C, t0, t1)
+					extCache[si] = (E, _unit(*_bezD(E, 0.0)), _unit(*_bezD(E, 1.0)))
+
 				def farTangentLine(other, atStart):
 					"""Tangent line (point, dir) at the far end of a neighbouring
-					segment: its A end if atStart else its B end."""
+					segment -- for curves, at the far end of its EXTENDED arc, so
+					the cap lands on that arc's corner leg (its limiting tangent)."""
 					if other['c1'] is None:
 						d = _unit(other['B'][0] - other['A'][0], other['B'][1] - other['A'][1])
 						return (other['A'] if atStart else other['B']), d
+					oi = segs.index(other)
+					if oi in extCache:
+						E_o, d0, d3 = extCache[oi]
+						return (E_o[0], d0) if atStart else (E_o[3], d3)
 					if atStart:
 						return other['A'], _unit(other['c1'][0] - other['A'][0], other['c1'][1] - other['A'][1])
 					return other['B'], _unit(other['B'][0] - other['c2'][0], other['B'][1] - other['c2'][1])
@@ -510,11 +604,17 @@ class MakeItalic(FilterWithDialog):
 						# makes no proposal; its neighbours decide the shared nodes
 						pass
 
-					t0, t1 = _extend(C)
+					t0, t1 = _extend(C, extBounds)
 					E = _sub(C, t0, t1)
 					dE0 = _unit(*_bezD(E, 0.0))
 					dE3 = _unit(*_bezD(E, 1.0))
 					if dE0 is None or dE3 is None:
+						noCorner()
+						continue
+					# A segment is treated as round only if at least one end
+					# sits on an axis extreme (real or reached by extension); a
+					# shallow curve with neither is left alone (v/w/x sides, terminals)
+					if _axisKind(dE0) is None and _axisKind(dE3) is None:
 						noCorner()
 						continue
 					hit = _rayInt(E[0], dE0, E[3], (-dE3[0], -dE3[1]))
@@ -526,6 +626,13 @@ class MakeItalic(FilterWithDialog):
 						noCorner()  # tangents diverge: inflection / degenerate
 						continue
 					mid = ((E[0][0] + E[3][0]) / 2.0, (E[0][1] + E[3][1]) / 2.0)
+					# nearly-parallel end tangents: the corner runs off to infinity
+					# and is useless as a pivot (a b's long stem-curve, a straight
+					# side drawn as one shallow arc). Treat it as straight.
+					chordE = math.hypot(E[3][0] - E[0][0], E[3][1] - E[0][1])
+					if math.hypot(corner[0] - mid[0], corner[1] - mid[1]) > CORNER_FAR * chordE:
+						noCorner()
+						continue
 					dx, dy = corner[0] - mid[0], corner[1] - mid[1]
 					if abs(dx) < 1e-6 or abs(dy) < 1e-6:
 						noCorner()
@@ -545,6 +652,7 @@ class MakeItalic(FilterWithDialog):
 						dN = abs(proj)
 						dH = abs((Cleg[0] - H[0]) * tN[0] + (Cleg[1] - H[1]) * tN[1])
 						fp, fd = farTangentLine(otherSeg, atStart)
+						capped = False
 						if fd is not None:
 							far = _rayInt(N, tN, fp, fd)
 							if far is not None:
@@ -552,12 +660,58 @@ class MakeItalic(FilterWithDialog):
 								dF = abs((F[0] - N[0]) * tN[0] + (F[1] - N[1]) * tN[1])
 								dN = min(dN, dF)
 								dH = min(dH, abs((F[0] - H[0]) * tN[0] + (F[1] - H[1]) * tN[1]))
+								capped = True
+						if not capped and otherSeg['c1'] is not None:
+							# The neighbouring ARC runs parallel to this tangent (a
+							# u's straight left side) so it yields no cap and the
+							# node would slide to a far-away corner. Bound it by
+							# that arc's own half extent. Line neighbours are left
+							# to the clip step, which re-intersects with the stem.
+							oA, oB = otherSeg['A'], otherSeg['B']
+							chordOther = math.hypot(oB[0] - oA[0], oB[1] - oA[1])
+							if chordOther > 1e-6:
+								dN = min(dN, 0.5 * chordOther)
+								dH = min(dH, 0.5 * chordOther)
 						sign = -s * toward   # shrink (s=-1) -> toward the corner
+						chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
+						dN = min(dN, 2.0 * chordAB)
+						dH = min(dH, 2.0 * chordAB)
 						return ((sign * strength * dN * tN[0], sign * strength * dN * tN[1]),
 							(sign * strength * dH * tN[0], sign * strength * dH * tN[1]))
 
 					mvA, mv1 = endMove(A, tA, c1, prev, True)
 					mvB, mv2 = endMove(B, tB, c2, nxt, False)
+
+					# corrected extended arc, for clipping against adjoining lines
+					f = 1.0 + s * strength
+					E2 = tuple((corner[0] + f * (P[0] - corner[0]), corner[1] + f * (P[1] - corner[1])) for P in E)
+					span = (t1 - t0) if abs(t1 - t0) > 1e-9 else 1.0
+					u0 = (0.0 - t0) / span
+					u1 = (1.0 - t0) / span
+
+					def clipEnd(lineSeg, atStart):
+						"""Place the node at the intersection of the corrected
+						extended arc with the neighbouring straight line; the
+						handles come from re-splitting the arc there."""
+						u = self._clipToLine(E2, u0 if atStart else u1, lineSeg['A'], lineSeg['B'])
+						if u is None:
+							return None
+						S = _sub(E2, u, u1) if atStart else _sub(E2, u0, u)
+						return S
+
+					chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
+					clipLimit = abs(strength) * 2.0 * chordAB + 2.0   # seg-clip-limit
+					if prev['c1'] is None:
+						S = clipEnd(prev, True)
+						if S is not None and math.hypot(S[0][0] - A[0], S[0][1] - A[1]) <= clipLimit:
+							mvA = (S[0][0] - A[0], S[0][1] - A[1])
+							mv1 = (S[1][0] - c1[0], S[1][1] - c1[1])
+					if nxt['c1'] is None:
+						S = clipEnd(nxt, False)
+						if S is not None and math.hypot(S[3][0] - B[0], S[3][1] - B[1]) <= clipLimit:
+							mvB = (S[3][0] - B[0], S[3][1] - B[1])
+							mv2 = (S[2][0] - c2[0], S[2][1] - c2[1])
+
 					proposals.setdefault(seg['iA'], []).append(mvA)
 					proposals.setdefault(seg['iB'], []).append(mvB)
 					handleMove[seg['i1']] = (mv1[0], mv1[1], seg['iA'], mvA)
@@ -643,7 +797,7 @@ class MakeItalic(FilterWithDialog):
 							h.position = NSMakePoint(h.position.x + d[0], h.position.y + d[1])
 
 		# ================= 4. keep extremes =================
-		# Italify-style: slide each formerly-vertical-extreme node along the
+		# Slide each formerly-vertical-extreme node along the
 		# corrected outline to the true x-extreme and refit the two adjoining
 		# cubics; only commit if the outline moves by <= EXTREME_TOL units.
 		for path, i in verticalNodes:
@@ -679,6 +833,15 @@ class MakeItalic(FilterWithDialog):
 		_, seg, r = best
 		if (seg == 0 and r > 1 - 1e-4) or (seg == 1 and r < 1e-4):
 			return  # already at the extreme
+		# Distance limit: on a nearly straight run (a u's left side, a b's stem)
+		# the outline hardly changes however far the node slides, so the
+		# deviation test alone would allow it to travel most of the letter.
+		Ptarget = _bez(C1 if seg == 0 else C2, r)
+		slide = math.hypot(Ptarget[0] - P(n)[0], Ptarget[1] - P(n)[1])
+		host = C1 if seg == 0 else C2
+		hostChord = math.hypot(host[3][0] - host[0][0], host[3][1] - host[0][1])
+		if slide > EXTREME_SLIDE * hostChord:
+			return
 		# samples along the two original cubics for the refit
 		def samples(C, t0, t1, k=24):
 			return [_bez(C, t0 + (t1 - t0) * j / float(k)) for j in range(k + 1)]
@@ -739,57 +902,71 @@ class MakeItalic(FilterWithDialog):
 
 	@objc.python_method
 	def _clipToLine(self, E2, u, LA, LB):
-		"""Parameter on cubic E2 (near u) where it crosses the line LA-LB."""
+		"""Parameter on cubic E2 (searching around u, on the extrapolated
+		curve if needed) where it crosses the infinite line through LA-LB.
+		Returns None when there is no crossing nearby."""
 		d = _unit(LB[0] - LA[0], LB[1] - LA[1])
 		if d is None:
-			return u
+			return None
 		nx, ny = -d[1], d[0]
 
 		def sd(t):
 			P = _bez(E2, t)
 			return (P[0] - LA[0]) * nx + (P[1] - LA[1]) * ny
-		# bracket around u
-		lo, hi = u - 0.35, u + 0.35
-		flo, fhi = sd(lo), sd(hi)
-		if flo * fhi > 0:
-			return u
-		for _ in range(40):
-			mid = (lo + hi) / 2.0
-			fm = sd(mid)
-			if flo * fm <= 0:
-				hi, fhi = mid, fm
-			else:
-				lo, flo = mid, fm
-		return (lo + hi) / 2.0
+		# expanding bracket search around u (up to +-1.5 in parameter)
+		for half in (0.15, 0.4, 0.8, 1.5):
+			lo, hi = u - half, u + half
+			flo, fhi = sd(lo), sd(hi)
+			if flo * fhi <= 0:
+				for _ in range(50):
+					mid = (lo + hi) / 2.0
+					fm = sd(mid)
+					if flo * fm <= 0:
+						hi, fhi = mid, fm
+					else:
+						lo, flo = mid, fm
+				return (lo + hi) / 2.0
+		return None
 
 	# ------------------------------------------------------------ filter
 
 	@objc.python_method
 	def filter(self, layer, inEditView, customParameters):
+		params = customParameters or {}
 		try:
-			def P(key, default):
-				if key in customParameters:
-					return float(customParameters[key])
-				return default
-			angle = P('angle', self._angle)
-			curve = P('curve', self.val('curve')) / 100.0
-			term = P('terminals', self.val('terminals')) / 100.0
-			diag = P('diagonal', self.val('diagonal')) / 100.0
-			stem = P('stem', self.val('stem')) / 100.0
-			if 'extremes' in customParameters:
-				verts = str(customParameters['extremes']).strip() in ("1", "true", "yes")
-			else:
-				verts = bool(self.vertCheck.state())
-			self.italicize(layer, angle, curve, term, diag, stem, verts)
-		except Exception:
-			print(traceback.format_exc())
+			def P(key, fallback):
+				value = float(params.get(key, fallback))
+				if not math.isfinite(value):
+					raise ValueError("Parameters must be finite numbers")
+				return value
+			defaults = {'curve': 100., 'terminals': 0., 'diagonal': 100., 'stem': 0.}
+			def amount(key):
+				fallback = self.val(key) if inEditView and hasattr(self, '_values') else defaults[key]
+				return max(0., min(100. if key == 'terminals' else 150., P(key, fallback))) / 100.
+			angle = P('angle', getattr(self, '_angle', 12.) if inEditView else 12.)
+			verts = bool(self.vertCheck.state()) if inEditView and hasattr(self, 'vertCheck') else False
+			if 'extremes' in params:
+				verts = str(params['extremes']).strip().lower() in ('1', 'true', 'yes')
+			# A zero Balance is exactly a plain slant, including when refitting is checked.
+			if inEditView and not params and hasattr(self, 'balanceSlider') and self.balanceSlider.doubleValue() == 0:
+				verts = False
+			self.italicize(layer, angle, amount('curve'), amount('terminals'), amount('diagonal'), amount('stem'), verts)
+			if inEditView and hasattr(self, 'status'):
+				self.status.setStringValue_("Preview ready. Apply keeps this result.")
+		except Exception as exc:
+			if inEditView and hasattr(self, 'status'):
+				self.status.setStringValue_(str(exc))
+				self.status.setToolTip_(str(exc))
+			if not inEditView:
+				raise
+			print("Curse: %s" % exc)
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; angle:%g; curve:%d; terminals:%d; diagonal:%d; stem:%d; extremes:%d" % (
-			self.__class__.__name__, round(self._angle, 1), round(self.val('curve')),
-			round(self.val('terminals')), round(self.val('diagonal')), round(self.val('stem')),
-			1 if self.vertCheck.state() else 0)
+		return "%s; angle:%g; curve:%g; terminals:%g; diagonal:%g; stem:%g; extremes:%d" % (
+			self.__class__.__name__, self._angle, self.val('curve'), self.val('terminals'),
+			self.val('diagonal'), self.val('stem'),
+			1 if self.vertCheck.state() and self.balanceSlider.doubleValue() > 0 else 0)
 
 	@objc.python_method
 	def __file__(self):

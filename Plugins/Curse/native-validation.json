@@ -1,0 +1,13 @@
+{
+  "fixture": "Synthetic cubic ring, 500-unit x-height",
+  "checks": {
+    "cancelExact": true,
+    "applyChanged": true,
+    "negativeAngle": true,
+    "fineTuneCommitted": true,
+    "nodeCountsSame": true,
+    "undoExact": true,
+    "redoExact": true,
+    "zeroBalancePureSlantOnGrid": true
+  }
+}
