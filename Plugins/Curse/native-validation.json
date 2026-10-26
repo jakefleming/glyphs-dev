@@ -1,13 +1,16 @@
 {
-  "fixture": "Synthetic cubic ring, 500-unit x-height",
   "checks": {
     "cancelExact": true,
     "applyChanged": true,
     "negativeAngle": true,
     "fineTuneCommitted": true,
-    "nodeCountsSame": true,
+    "nodeStructurePreserved": true,
     "undoExact": true,
     "redoExact": true,
     "zeroBalancePureSlantOnGrid": true
-  }
+  },
+  "fixture": "Synthetic cubic ring, 500-unit x-height",
+  "glyphsVersion": "3.4.1",
+  "testedSourceSHA256": "f99f1256bbb39774f74ab39d4c224bc68c28f56e6cafea0e1027fb5d6c8d6e31",
+  "sourceASTSHA256": "51ae74c04e206b12bed9a2cf358e226ac1671c4999483b21b27bc55339912b90"
 }

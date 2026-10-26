@@ -224,4 +224,58 @@ class GeometryTests(unittest.TestCase):
         mi.italicize(layer,12,1,0,1,0,True)
         for a,b in zip(before[0],output(layer)[0]):self.assertAlmostEqual(b[0],a[0]+(a[1]-250)*math.tan(math.radians(12)))
 
+
+class ContourGuardTests(unittest.TestCase):
+    def guard(self, before, after):
+        return ns['_safe_contours'](
+            [[n[:2] for n in c] for c in before],
+            [[n[:2] for n in c] for c in after],
+            [[n[2] for n in c] for c in before],
+            [[n[3] for n in c] for c in before])
+
+    def test_valid_correction_is_not_reduced(self):
+        before=ring()
+        after=[[(x*1.05,y,t,s) for x,y,t,s in c] for c in before]
+        safe,amount=self.guard(before,after)
+        self.assertEqual(amount,1.)
+        self.assertEqual(safe,[[n[:2] for n in c] for c in after])
+
+    def test_crossed_contour_backs_off(self):
+        before=[polygon([(0,0),(100,0),(100,100),(0,100)])]
+        after=[polygon([(0,0),(100,100),(100,0),(0,100)])]
+        safe,amount=self.guard(before,after)
+        self.assertLess(amount,1.)
+        self.assertGreater(amount,0.)
+        self.assertEqual(ns['_outline_crossings'](safe),0)
+        self.assertEqual(ns['_outline_signature'](safe),ns['_outline_signature']([[n[:2] for n in before[0]]]))
+
+    def test_counter_cannot_leave_outer_contour(self):
+        before=ring();after=[before[0],[(x+500,y,t,s) for x,y,t,s in before[1]]]
+        safe,amount=self.guard(before,after)
+        self.assertLess(amount,1.)
+        flat=[ns['_outline_points'](c,[n[2] for n in src],.005) for c,src in zip(safe,before)]
+        original=[ns['_outline_points']([n[:2] for n in c],[n[2] for n in c],.005) for c in before]
+        self.assertEqual(ns['_outline_crossings'](flat),0)
+        self.assertEqual(ns['_outline_signature'](flat),ns['_outline_signature'](original))
+
+    def test_adjacent_edges_are_not_intersections(self):
+        self.assertEqual(ns['_outline_crossings']([[(0,0),(100,0),(100,100),(0,100)]]),0)
+        self.assertEqual(ns['_outline_crossings']([[(0,0),(100,100),(100,0),(0,100)]]),1)
+
+    def test_signed_control_extremes_stay_smooth(self):
+        for angle in (-45,-24,24,45):
+            for term,stem in ((0,0),(1,1),(.5,1.5)):
+                out=transform(ring(),angle=angle,curve=1.5,term=term,stem=stem,diag=1.5)
+                self.assertEqual(sanity(out)['kinks'],0)
+                flat=[ns['_outline_points']([n[:2] for n in c],[n[2] for n in c],.005) for c in out]
+                self.assertEqual(ns['_outline_crossings'](flat),0)
+
+    def test_smooth_join_handles_are_collinear(self):
+        p=ellipse();before=[n[:2] for n in p];changed=list(before)
+        changed[1]=(changed[1][0]+15,changed[1][1])
+        safe=ns['_smooth_points'](changed,before,[n[2] for n in p],[n[3] for n in p])
+        a,b,c=safe[-1],safe[0],safe[1]
+        v,w=_unit(b[0]-a[0],b[1]-a[1]),_unit(c[0]-b[0],c[1]-b[1])
+        self.assertLess(math.dist(v,w),1e-9)
+
 if __name__=='__main__':unittest.main()

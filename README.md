@@ -47,6 +47,9 @@ stem weight and the amount of curve adjustment at detected stroke endings.
 shape tolerance. Balance also scales the round, diagonal and stem adjustments.
 At zero, it produces a plain slant, rounded to the font's grid.
 
+At tight joins, Curse backs off the correction if it would fold a contour.
+The slant angle stays the same.
+
 Curse keeps node counts, node types and advance widths. It works on cubic
 outlines; decompose components in a copy first. Open paths receive a plain
 slant. It won't draw a new italic `a` or `g`. Check tight joins and tails after

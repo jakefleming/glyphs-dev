@@ -47,13 +47,12 @@ def _bezD(C, t):
 
 
 def _sub(C, t0, t1):
-	"""Reparameterize a cubic over any finite interval, including reversed spans."""
-	a, b = _bez(C, t0), _bez(C, t1)
-	da, db = _bezD(C, t0), _bezD(C, t1)
-	scale = (t1 - t0) / 3.0
-	return (a, (a[0] + scale * da[0], a[1] + scale * da[1]),
-	        (b[0] - scale * db[0], b[1] - scale * db[1]), b)
-
+    """Reparameterize a cubic over any finite interval, including reversed spans."""
+    a, b = _bez(C, t0), _bez(C, t1)
+    da, db = _bezD(C, t0), _bezD(C, t1)
+    scale = (t1 - t0) / 3.0
+    return (a, (a[0] + scale * da[0], a[1] + scale * da[1]),
+            (b[0] - scale * db[0], b[1] - scale * db[1]), b)
 
 def _rayInt(P, d1, Q, d2):
 	den = d1[0] * d2[1] - d1[1] * d2[0]
@@ -247,6 +246,449 @@ def _fitCubicFree(samples, p0, p3, t1, t2, iters=8):
 	return best[1] if best else None
 
 
+
+def _outline_points(points,types,tolerance=.02):
+    on=[i for i,t in enumerate(types) if t!='offcurve']
+    if not on:return []
+    result=[points[on[0]]]
+    def distance(p,a,b):
+        dx,dy=b[0]-a[0],b[1]-a[1];ll=dx*dx+dy*dy
+        t=max(0.,min(1.,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/ll)) if ll else 0.
+        return math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy)
+    def flatten(c,depth=0):
+        if depth>=14 or max(distance(c[1],c[0],c[3]),distance(c[2],c[0],c[3]))<=tolerance:
+            result.append(c[3]);return
+        a,b,c1,d=c
+        mid=lambda a,b:((a[0]+b[0])/2.,(a[1]+b[1])/2.)
+        ab,bc,cd=mid(a,b),mid(b,c1),mid(c1,d)
+        abc,bcd=mid(ab,bc),mid(bc,cd);m=mid(abc,bcd)
+        flatten((a,ab,abc,m),depth+1);flatten((m,bcd,cd,d),depth+1)
+    for a,b in zip(on,on[1:]+on[:1]):
+        between=[];j=(a+1)%len(points)
+        while j!=b:between.append(j);j=(j+1)%len(points)
+        if len(between)==2:flatten([points[i] for i in (a,*between,b)])
+        else:result.append(points[b])
+    return result[:-1]
+
+def _outline_crossings(polygons):
+    edges=[]
+    for k,poly in enumerate(polygons):
+        for i,a in enumerate(poly):
+            b=poly[(i+1)%len(poly)]
+            if math.dist(a,b)<1e-10:continue
+            edges.append((min(a[0],b[0]),max(a[0],b[0]),min(a[1],b[1]),max(a[1],b[1]),k,i,a,b,len(poly)))
+    edges.sort(key=lambda e:e[0]);active=[];count=0
+    cross=lambda a,b:a[0]*b[1]-a[1]*b[0]
+    for e in edges:
+        active=[p for p in active if p[1]>=e[0]]
+        for p in active:
+            if p[2]>e[3] or p[3]<e[2]:continue
+            if p[4]==e[4] and ((p[5]-e[5])%e[8] in (0,1,e[8]-1)):continue
+            a,b,c,d=p[6],p[7],e[6],e[7]
+            v=(b[0]-a[0],b[1]-a[1]);w=(d[0]-c[0],d[1]-c[1]);r=(c[0]-a[0],c[1]-a[1]);den=cross(v,w)
+            if abs(den)>1e-10:
+                t,u=cross(r,w)/den,cross(r,v)/den
+                if 1e-8<t<1-1e-8 and 1e-8<u<1-1e-8:count+=1
+        active.append(e)
+    return count
+
+def _outline_signature(polygons):
+    signs=[]
+    for poly in polygons:
+        area=sum(a[0]*b[1]-a[1]*b[0] for a,b in zip(poly,poly[1:]+poly[:1]))
+        signs.append(0 if abs(area)<1e-8 else (1 if area>0 else -1))
+    def inside(p,poly):
+        result=False
+        for a,b in zip(poly,poly[1:]+poly[:1]):
+            if (a[1]>p[1])!=(b[1]>p[1]) and p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0]:result=not result
+        return result
+    nesting=tuple(inside(a[0],b) for i,a in enumerate(polygons) if a for j,b in enumerate(polygons) if b and i!=j)
+    return tuple(signs),nesting
+
+def _smooth_points(points,original,types,smooth):
+    out=list(points);n=len(out)
+    unit=lambda x,y:(x/math.hypot(x,y),y/math.hypot(x,y)) if math.hypot(x,y)>1e-10 else None
+    for i in range(n):
+        if types[i]=='offcurve' or not smooth[i] or types[(i-1)%n]!='offcurve' or types[(i+1)%n]!='offcurve':continue
+        a,b,c=original[(i-1)%n],original[i],original[(i+1)%n]
+        ta,tb=unit(b[0]-a[0],b[1]-a[1]),unit(c[0]-b[0],c[1]-b[1])
+        if not ta or not tb or math.dist(ta,tb)>.05:continue
+        a,b,c=out[(i-1)%n],out[i],out[(i+1)%n]
+        u,v=unit(b[0]-a[0],b[1]-a[1]),unit(c[0]-b[0],c[1]-b[1])
+        if not u or not v:continue
+        if u[0]*v[0]+u[1]*v[1]<=0:return None
+        if math.dist(u,v)<1e-9:continue
+        t=unit(u[0]+v[0],u[1]+v[1]);la,lb=math.dist(a,b),math.dist(b,c)
+        out[(i-1)%n]=(b[0]-la*t[0],b[1]-la*t[1]);out[(i+1)%n]=(b[0]+lb*t[0],b[1]+lb*t[1])
+    return out
+
+def _safe_contours(original,candidate,types,smooth):
+    """Reduce only the correction if it would change contour topology.
+
+    `original` is already slanted. The requested angle is never reduced.
+    """
+    polygons=[_outline_points(p,t) for p,t in zip(original,types)]
+    original_count=_outline_crossings(polygons);signature=_outline_signature(polygons)
+    def attempt(amount):
+        result=[]
+        for before,after,t,s in zip(original,candidate,types,smooth):
+            pts=[(a[0]+amount*(b[0]-a[0]),a[1]+amount*(b[1]-a[1])) for a,b in zip(before,after)]
+            if any(not math.isfinite(v) for p in pts for v in p):return None
+            pts=_smooth_points(pts,before,t,s)
+            if pts is None:return None
+            result.append(pts)
+        poly=[_outline_points(p,t) for p,t in zip(result,types)]
+        if _outline_crossings(poly)>original_count:return None
+        if _outline_signature(poly)!=signature:return None
+        return result
+    full=attempt(1.)
+    if full is not None:return full,1.
+    upper=1.
+    for step in range(7,-1,-1):
+        lower=step/8.;result=attempt(lower)
+        if result is None:upper=lower;continue
+        for _ in range(7):
+            mid=(lower+upper)/2.;trial=attempt(mid)
+            if trial is None:upper=mid
+            else:lower=mid;result=trial
+        return attempt(lower*.98) or original,lower*.98
+    return original,0.
+
+
+def _correctRuns(path, strength, angle, stem, origin, terminal_weights, clip_to_line):
+    """Correct connected cubic runs, then reconcile their shared endpoints."""
+    nodes=list(path.nodes); n=len(nodes)
+    xy=[(a.position.x,a.position.y) for a in nodes]
+    on=[i for i,a in enumerate(nodes) if a.type!='offcurve']
+    sub,roots,unit,ray=_sub,_extremeParams,_unit,_rayInt
+    frags=[]
+    for k,a in enumerate(on):
+        b=on[(k+1)%len(on)];ids=[];j=(a+1)%n
+        while j!=b:ids.append(j);j=(j+1)%n
+        if len(ids)!=2:
+            frags.append(dict(C=[xy[a],xy[b]],a=a,b=b,orig=None,ts=(0,1)))
+            continue
+        C=[xy[a],xy[ids[0]],xy[ids[1]],xy[b]]
+        frags.append(dict(C=C,a=a,b=b,orig=(a,*ids,b),ts=(0,1)))
+    def tangent(f,start):
+        pts=f['C'] if start else list(reversed(f['C']))
+        for p in pts[1:]:
+            t=unit(p[0]-pts[0][0],p[1]-pts[0][1])
+            if t:return t if start else (-t[0],-t[1])
+    def pivot(i):
+        f=frags[i];prev=frags[i-1]
+        if len(f['C'])==2 or len(prev['C'])==2 or not isinstance(f['a'],int):return True
+        a,b=tangent(prev,False),tangent(f,True)
+        if not a or not b:return True
+        if math.dist(a,b)>.05:return True
+        return min(abs(C[a][j]-C[b][j]) for C,a,b in [(f['C'],1,0),(prev['C'],-2,-1)] for j in (0,1))<.02
+    def extension(C,start,whole):
+        roots0=sorted(t for t in roots(C) if .001<t<.999)
+        if roots0:
+            t=roots0[0] if start else roots0[-1];internal=True
+        else:
+            ts=roots(C)+_inflections(C)
+            ts=[t for t in ts if (-3<=t< -1e-6 if start else 1+1e-6<t<=4)]
+            deriv=_bezD(C,0 if start else 1)
+            if min(abs(v) for v in deriv)<1e-6:return None
+            t=(max(ts) if start else min(ts)) if ts else (-3. if start else 4.);internal=False
+        E=list(sub(C,t,0)) if start else list(sub(C,1,t))
+        # At an internal extreme the continuation is traversed backwards.
+        far=E[0] if start else E[-1];at=C[0] if start else C[-1]
+        at=whole[-1] if start else whole[0]
+        handle=whole[-2] if start else whole[1]
+        ta=(handle[0]-at[0],handle[1]-at[1]);tf=_bezD(C,t)
+        ua,uf=unit(*ta),unit(*tf)
+        if not ua or not uf or abs(ua[0]*uf[1]-ua[1]*uf[0])<.001:return None
+        hit=ray(at,ta,far,tf)
+        if not hit:return None
+        center=hit[0]
+        size=max(1,max(p[0] for p in whole)-min(p[0] for p in whole),max(p[1] for p in whole)-min(p[1] for p in whole))
+        if math.dist(center,far)>4*size:return None
+        mirror=(2*far[0]-center[0],2*far[1]-center[1])
+        return dict(P=E,center=center,mirror=mirror,internal=internal,t=t)
+    def smooth_at(index):
+        prev=frags[index-1];nxt=frags[index]
+        t0,t1=tangent(prev,False),tangent(nxt,True)
+        return t0 and t1 and math.dist(t0,t1)<=.05
+    starts=[i for i in range(len(frags)) if pivot(i)]
+    if not starts:return
+    pivots=[]
+    for i,f in enumerate(frags):
+        if i in starts:
+            prev=frags[i-1]
+            pivots.append(dict(order=float(i),point=f['C'][0],incoming=prev['C'][-2],outgoing=f['C'][1],real=i,both=len(prev['C'])==4 and len(f['C'])==4,ovbefore=False,ovafter=False))
+        if len(f['C'])==4:
+            for t in sorted(set(roots(f['C']))):
+                if .001<t<.999:
+                    left,right=sub(f['C'],0,t),sub(f['C'],t,1)
+                    pivots.append(dict(order=i+t,point=left[-1],incoming=left[-2],outgoing=right[1],real=None,both=True,ovbefore=False,ovafter=False))
+    pivots.sort(key=lambda p:p['order'])
+    for i,p in enumerate(pivots):
+        q=pivots[(i+1)%len(pivots)]
+        def qualified(p,key):
+            tol=1e-9 if p['real'] is not None else 1.
+            return not p['both'] or min(abs(p['point'][j]-p[key][j]) for j in (0,1))<tol
+        center=None
+        if qualified(p,'outgoing') and qualified(q,'incoming'):
+            va=(p['outgoing'][0]-p['point'][0],p['outgoing'][1]-p['point'][1]);vb=(q['incoming'][0]-q['point'][0],q['incoming'][1]-q['point'][1])
+            hit=ray(p['point'],va,q['point'],vb)
+            if hit:center=hit[0]
+        p['after']=center;q['before']=center
+    real={p['real']:p for p in pivots if p['real'] is not None}
+    for i,p in real.items():
+        for forward,key in [(True,'after'),(False,'before')]:
+            C=frags[i if forward else i-1]['C']
+            if len(C)!=4:continue
+            ts=sorted(t for t in _inflections(C) if .001<t<.999)
+            if not ts:continue
+            t=ts[0] if forward else ts[-1]
+            part=sub(C,0,t) if forward else sub(C,t,1)
+            endpoint,handle=(part[0],part[1]) if forward else (part[-1],part[-2])
+            p[key]=(endpoint[0]+3*(handle[0]-endpoint[0]),endpoint[1]+3*(handle[1]-endpoint[1]))
+            p['ov'+key]=True
+    def curvature_sign(C,at_start=True):
+        if not at_start:C=list(reversed(C))
+        a=(C[1][0]-C[0][0],C[1][1]-C[0][1]);b=(C[2][0]-C[1][0],C[2][1]-C[1][1])
+        x=a[0]*b[1]-a[1]*b[0]
+        return 0 if abs(x)<1e-9 else 1 if x>0 else -1
+    def inflection_time(C):
+        def cross(t):
+            v=_bezD(C,t)
+            a=[C[2][j]-2*C[1][j]+C[0][j] for j in (0,1)]
+            b=[C[3][j]-2*C[2][j]+C[1][j] for j in (0,1)]
+            w=[6*((1-t)*a[j]+t*b[j]) for j in (0,1)]
+            return v[0]*w[1]-v[1]*w[0]
+        lo=0.;prev=cross(lo)
+        for k in range(1,65):
+            hi=k/64.;val=cross(hi)
+            if prev*val<=0:
+                for _ in range(50):
+                    mid=(lo+hi)/2.;v=cross(mid)
+                    if abs(v)<1e-8:break
+                    if cross(lo)*v>0:lo=mid
+                    else:hi=mid
+                    if hi-lo<1e-8:mid=(lo+hi)/2.;break
+                return mid if .001<mid<.999 else None
+            lo=hi;prev=val
+        return None
+    for i,p in real.items():
+        for forward,key in [(True,'after'),(False,'before')]:
+            if p['ov'+key]:continue
+            idx=i if forward else (i-1)%len(frags);last_sign=0
+            for step in range(32):
+                C=frags[idx]['C']
+                if len(C)!=4:break
+                C=C if forward else list(reversed(C))
+                sign=curvature_sign(C)
+                if step and ((sign and last_sign and sign!=last_sign) or inflection_time(C) is not None):
+                    q=p['point'];h=p['outgoing' if forward else 'incoming']
+                    p[key]=(q[0]+3*(h[0]-q[0]),q[1]+3*(h[1]-q[1]));p['ov'+key]=True
+                    break
+                last_sign=-curvature_sign(C,False) or sign or last_sign
+                nxt=(idx+1)%len(frags) if forward else idx
+                if nxt in real or nxt==i:break
+                idx=(idx+(1 if forward else -1))%len(frags)
+    # A geometric corner with two curves supplies its own adjacent centers.
+    for i,p in real.items():
+        if not p['both'] or smooth_at(i):continue
+        for forward,key in [(True,'after'),(False,'before')]:
+            if p['ov'+key]:continue
+            C=frags[i if forward else i-1]['C']
+            va=(C[1][0]-C[0][0],C[1][1]-C[0][1])
+            vb=(C[-2][0]-C[-1][0],C[-2][1]-C[-1][1])
+            hit=ray(C[0],va,C[-1],vb)
+            if hit:p[key]=hit[0]
+    runs=[]
+    for k,i in enumerate(starts):
+        stop=starts[(k+1)%len(starts)];fs=[frags[i]];j=(i+1)%len(frags)
+        while j!=stop:fs.append(frags[j]);j=(j+1)%len(frags)
+        points=list(fs[0]['C'])
+        for f in fs[1:]:points.extend(f['C'][1:])
+        a,b=tangent(fs[0],True),tangent(fs[-1],False)
+        av=(points[1][0]-points[0][0],points[1][1]-points[0][1])
+        bv=(points[-2][0]-points[-1][0],points[-2][1]-points[-1][1])
+        hit=ray(points[0],av,points[-1],bv)
+        corner=hit[0] if hit else ((points[0][0]+points[-1][0])/2.,(points[0][1]+points[-1][1])/2.)
+
+        C=[points[0],points[1],points[-2],points[-1]]
+        dx,dy=_bezD(C,.5);d=1 if dx*dy>1e-9 else (-1 if dx*dy< -1e-9 else 0)
+        ea=extension(fs[0]['C'],True,points) if len(fs[0]['C'])==4 and not smooth_at(i) else None
+        eb=extension(fs[-1]['C'],False,points) if len(fs[-1]['C'])==4 and not smooth_at(stop) else None
+        selected=eb['center'] if eb else ea['center'] if ea else corner
+        runs.append(dict(fs=fs,P=points,corner=selected,d=d,curve=len(fs[0]['C'])>2,ea=ea,eb=eb,start=real[i],end=real[stop]))
+    proposals={};newfrags=[]
+    def moved(P,S,E,amount):
+        vx,vy=E[0]-S[0],E[1]-S[1];ll=vx*vx+vy*vy
+        if ll<1e-8:return P
+        t=max(0,min(1,((P[0]-S[0])*vx+(P[1]-S[1])*vy)/ll))
+        w=max(-1.,min(1.,amount))*min(t,1-t)
+        return P[0]+w*vx,P[1]+w*vy
+    def correct_half(P,S,E,amount):
+        theta=math.radians(angle)
+        comp=1./math.cos(theta*stem)
+        def sc(p):return (origin[0]+comp*(p[0]-origin[0]),p[1])
+        points=[sc(p) for p in [S]+P+[E]]
+        return [moved(p,points[0],points[-1],amount) for p in points[1:-1]]
+    for k,r in enumerate(runs):
+        P=r['P'];C=r['corner'];before=runs[k-1];after=runs[(k+1)%len(runs)]
+        weight=min((terminal_weights or {}).get(f['a'],1.) for f in r['fs'])
+        if not r['curve']:
+            pp=P[:]
+        else:
+            ea,eb=r['ea'],r['eb']
+            CA=ea['center'] if ea else r['start']['after'] if r['start']['ovafter'] else C
+            CB=eb['center'] if eb else r['end']['before'] if r['end']['ovbefore'] else C
+            A=ea['mirror'] if ea else r['start']['before'] or (2*P[0][0]-C[0],2*P[0][1]-C[1])
+            B=eb['mirror'] if eb else r['end']['after'] or (2*P[-1][0]-C[0],2*P[-1][1]-C[1])
+            padA=ea['P'][:-1] if ea and not ea['internal'] else []
+            padB=eb['P'][1:] if eb and not eb['internal'] else []
+            Padded=padA+P+padB
+            dx,dy=_bezD([Padded[0],Padded[1],Padded[-2],Padded[-1]],.5)
+            dr=1 if dx*dy>1e-9 else (-1 if dx*dy< -1e-9 else 0)
+            d2=after['d'] if after['curve'] else -dr
+            pp=correct_half(Padded[:-2],A,CA,strength*dr*weight)+Padded[-2:]
+            pp=pp[:2]+correct_half(pp[2:],CB,B,strength*d2*weight)
+            pp=pp[len(padA):len(padA)+len(P)]
+        z=0
+        for f in r['fs']:
+            count=len(f['C']);newfrags.append((f,pp[z:z+count]));z+=count-1
+        for key,point in [(r['fs'][0]['a'],pp[0]),(r['fs'][-1]['b'],pp[-1])]:proposals.setdefault(key,[]).append(point)
+    # Reconcile complete cubic pieces at their common junction.
+
+    def extension_keeps_direction(C,t,start):
+        if 0<=t<=1:return True
+        end=C[0] if start else C[-1]
+        near=C[1:] if start else list(reversed(C[:-1]))
+        tangent=next(((q[0]-end[0],q[1]-end[1]) for q in near if math.dist(q,end)>1e-9),None)
+        if tangent is None:return False
+        if not start:tangent=(-tangent[0],-tangent[1])
+        z=[q[0]*tangent[0]+q[1]*tangent[1] for q in C]
+        a=-z[0]+3*z[1]-3*z[2]+z[3];b=2*(z[0]-2*z[1]+z[2]);c=z[1]-z[0]
+        rs=[]
+        if abs(a)<1e-10:
+            if abs(b)>1e-10:rs=[-c/b]
+        else:
+            disc=b*b-4*a*c
+            if disc>=0:rs=[(-b-math.sqrt(disc))/(2*a),(-b+math.sqrt(disc))/(2*a)]
+        lo,hi=(t,0.) if start else (1.,t)
+        return not any(lo+1e-8<r<hi-1e-8 for r in rs)
+
+    def sampled_corner(C,D,pivot,bez,samples=200,tolerance=.5):
+        # Locate candidate crossings, then solve on the actual cubic curves.
+        ta=[4.*i/samples for i in range(samples+1)]
+        tb=[-1.+4.*i/samples for i in range(samples+1)]
+        pa=[bez(C,t) for t in ta];pb=[bez(D,t) for t in tb]
+        def cross(a,b):return a[0]*b[1]-a[1]*b[0]
+        def delta(a,b):return (a[0]-b[0],a[1]-b[1])
+        def distance(P,Q,V):
+            ll=V[0]*V[0]+V[1]*V[1]
+            t=max(0.,min(1.,((P[0]-Q[0])*V[0]+(P[1]-Q[1])*V[1])/ll)) if ll>1e-9 else 0.
+            return math.hypot(Q[0]+t*V[0]-P[0],Q[1]+t*V[1]-P[1])
+        boxes=[]
+        for j in range(samples):
+            a,b=pb[j],pb[j+1]
+            boxes.append((min(a[0],b[0]),max(a[0],b[0]),min(a[1],b[1]),max(a[1],b[1])))
+        candidates=[]
+        for i in range(samples):
+            a,b=pa[i],pa[i+1];v=delta(b,a)
+            xmin,xmax=min(a[0],b[0])-tolerance,max(a[0],b[0])+tolerance
+            ymin,ymax=min(a[1],b[1])-tolerance,max(a[1],b[1])+tolerance
+            for j,box in enumerate(boxes):
+                if box[0]>xmax or box[1]<xmin or box[2]>ymax or box[3]<ymin:continue
+                q,r=pb[j],pb[j+1];w=delta(r,q);d=delta(q,a);den=cross(v,w)
+                hit=False
+                if abs(den)>1e-9:
+                    x,y=cross(d,w)/den,cross(d,v)/den
+                    if 0<=x<=1 and 0<=y<=1:
+                        candidates.append((ta[i]+x*(ta[i+1]-ta[i]),tb[j]+y*(tb[j+1]-tb[j])))
+                        hit=True
+                if not hit and min(distance(a,q,w),distance(b,q,w),distance(q,a,v),distance(r,a,v))<=tolerance:
+                    candidates.append(((ta[i]+ta[i+1])/2.,(tb[j]+tb[j+1])/2.))
+        refined=[]
+        for t,u in candidates:
+            for _ in range(12):
+                pc,pd=bez(C,t),bez(D,u);dx,dy=pc[0]-pd[0],pc[1]-pd[1]
+                if math.hypot(dx,dy)<1e-8:break
+                dc,dd=_bezD(C,t),_bezD(D,u)
+                den=cross(dc,dd)
+                if abs(den)<1e-12:break
+                dt=(dy*dd[0]-dx*dd[1])/den
+                du=(dc[0]*dy-dc[1]*dx)/den
+                step=max(1.,abs(dt)/.05,abs(du)/.05)
+                t+=dt/step;u+=du/step
+                if not 0<=t<=4 or not -1<=u<=3:break
+            # A trim must retain its original far endpoint and traversal order.
+            if not 1e-8<t<=4 or not -1<=u<1-1e-8:continue
+            pc,pd=bez(C,t),bez(D,u)
+            if math.dist(pc,pd)>.5:continue
+            if not extension_keeps_direction(C,t,False) or not extension_keeps_direction(D,u,True):continue
+            refined.append((math.dist(pc,pivot),t,u))
+        if not refined:return None
+        return min(refined)[1:]
+
+    for i,(f,C) in enumerate(newfrags):
+        prev,D=newfrags[i-1]
+        index=frags.index(f)
+        if len(C)==4 and len(D)==2 and not smooth_at(index):
+            if math.dist(f['C'][0],f['C'][1])<1e-9:
+                D[-1]=C[0];continue
+            u=clip_to_line(C,0,D[0],D[-1])
+            if u is not None and -1<u<.999:
+                C[:]=sub(C,u,1);D[-1]=C[0];continue
+        if len(C)==2 and len(D)==4 and not smooth_at(index):
+            if math.dist(prev['C'][-1],prev['C'][-2])<1e-9:
+                C[0]=D[-1];continue
+            t=clip_to_line(D,1,C[0],C[-1])
+            if t is not None and .001<t<2:
+                D[:]=sub(D,0,t);C[0]=D[-1];continue
+        if len(C)==4 and len(D)==4 and not smooth_at(index):
+            hit=sampled_corner(D,C,xy[f['a']],_bez)
+            if hit:
+                t,u=hit;D[:]=sub(D,0,t);C[:]=sub(C,u,1)
+                continue
+        # Preserve a smooth axis join when only one span retains its tangent.
+        if len(C)==4 and len(D)==4 and smooth_at(index):
+            original=tangent(f,True)
+            incoming=unit(D[-1][0]-D[-2][0],D[-1][1]-D[-2][1])
+            outgoing=unit(C[1][0]-C[0][0],C[1][1]-C[0][1])
+            if original and incoming and outgoing:
+                ai=abs(incoming[0]*original[1]-incoming[1]*original[0])
+                ao=abs(outgoing[0]*original[1]-outgoing[1]*original[0])
+                if min(abs(v) for v in original)<1e-9 and min(ai,ao)<1e-6 and max(ai,ao)>.01:
+                    q=D[-1] if ai<ao else C[0]
+                    li=max(0,(q[0]-D[-2][0])*original[0]+(q[1]-D[-2][1])*original[1])
+                    lo=max(0,(C[1][0]-q[0])*original[0]+(C[1][1]-q[1])*original[1])
+                    D[-1]=q;C[0]=q
+                    D[-2]=(q[0]-li*original[0],q[1]-li*original[1])
+                    C[1]=(q[0]+lo*original[0],q[1]+lo*original[1])
+                    continue
+        # Preserve the node position supplied by the adjoining valid span.
+        if f['a'] in proposals:
+            q=C[0]
+            if len(C)==4 and len(D)==4:
+                pvt=real.get(index)
+                if pvt and pvt['after'] is None and pvt['before'] is not None:q=D[-1]
+            da=(q[0]-D[-1][0],q[1]-D[-1][1]);db=(q[0]-C[0][0],q[1]-C[0][1])
+            D[-1]=q;C[0]=q
+            if len(D)==4:D[-2]=(D[-2][0]+da[0],D[-2][1]+da[1])
+            if len(C)==4:C[1]=(C[1][0]+db[0],C[1][1]+db[1])
+    collected={}
+    for f,p in newfrags:
+        if f['orig'] is None:
+            for idx,key in [(0,'a'),(-1,'b')]:
+                if isinstance(f[key],int):nodes[f[key]].position=NSMakePoint(*p[idx])
+        else:collected.setdefault(f['orig'],[]).append((f['ts'],p))
+    for ids,parts in collected.items():
+        for i,p in zip(ids,parts[0][1]):nodes[i].position=NSMakePoint(*p)
+
+    # Avoid floating-point drift at unchanged coordinates.
+    for nd,old in zip(nodes,xy):
+        x,y=nd.position.x,nd.position.y
+        if abs(x-old[0])<1e-10:x=old[0]
+        if abs(y-old[1])<1e-10:y=old[1]
+        nd.position=NSMakePoint(x,y)
+
 class MakeItalic(FilterWithDialog):
 
 	# ------------------------------------------------------------ UI
@@ -278,6 +720,7 @@ class MakeItalic(FilterWithDialog):
 			f.setAlignment_(1)
 			f.setTarget_(self)
 			f.setAction_("fieldChanged:")
+			f.setDelegate_(self)
 			parent.addSubview_(f)
 			return f
 
@@ -355,18 +798,21 @@ class MakeItalic(FilterWithDialog):
 		self.balanceField.setStringValue_("%g%%" % round(self.balanceSlider.doubleValue()))
 		self.update()
 
+	def controlTextDidEndEditing_(self, notification):
+		self.fieldChanged_(notification.object())
+
 	def fieldChanged_(self, sender):
 		try:
 			v = float(sender.stringValue().replace("°", "").replace("%", "").strip())
 			if not math.isfinite(v):
 				raise ValueError("Enter a finite number")
-			if sender is self.angleField:
+			if sender == self.angleField:
 				self._angle = max(-35., min(35., v))
-			elif sender is self.balanceField:
+			elif sender == self.balanceField:
 				self.balanceSlider.setDoubleValue_(max(0., min(100., v)))
 			else:
 				for key, f in self._fields.items():
-					if sender is f:
+					if sender == f:
 						self._values[key] = max(0., min(100. if key == 'terminals' else 150., v))
 		except (ValueError, TypeError):
 			pass
@@ -432,6 +878,7 @@ class MakeItalic(FilterWithDialog):
 			y0 = b.origin.y + b.size.height / 2.0
 
 		paths = [s for s in layer.shapes if isinstance(s, GSPath)]
+		slantedOriginal = [[(n.position.x + (n.position.y-y0)*k, n.position.y) for n in p.nodes] for p in paths if p.closed]
 		closed = [p for p in paths if p.closed]
 
 		def signedArea(path):
@@ -541,182 +988,11 @@ class MakeItalic(FilterWithDialog):
 			ys = [q[1] for q in allPts]
 			gw, gh = max(xs) - min(xs), max(ys) - min(ys)
 			extBounds = (min(xs) - 0.5 * gw, min(ys) - 0.5 * gh, max(xs) + 0.5 * gw, max(ys) + 0.5 * gh)
-		if curve > 0:
+		if curve > 0 and closed:
+			origin = ((min(x[0] for x in allPts) + max(x[0] for x in allPts)) / 2., y0)
 			for path, segs in zip(closed, pathSegs):
-				if segs is None:
-					continue
-				nodes = list(path.nodes)
-				nseg = len(segs)
-				proposals = {}   # node index -> list of (dx, dy)
-				handleMove = {}  # offcurve index -> (dx, dy, nodeIndex, nodeOwnProposal)
-
-				# pre-compute each curve segment's extended arc, so neighbours can
-				# refer to the tangent at its implicit extreme (its corner leg)
-				extCache = {}
-				for si, seg in enumerate(segs):
-					if seg['c1'] is None:
-						continue
-					C = (seg['A'], seg['c1'], seg['c2'], seg['B'])
-					t0, t1 = _extend(C, extBounds)
-					E = _sub(C, t0, t1)
-					extCache[si] = (E, _unit(*_bezD(E, 0.0)), _unit(*_bezD(E, 1.0)))
-
-				def farTangentLine(other, atStart):
-					"""Tangent line (point, dir) at the far end of a neighbouring
-					segment -- for curves, at the far end of its EXTENDED arc, so
-					the cap lands on that arc's corner leg (its limiting tangent)."""
-					if other['c1'] is None:
-						d = _unit(other['B'][0] - other['A'][0], other['B'][1] - other['A'][1])
-						return (other['A'] if atStart else other['B']), d
-					oi = segs.index(other)
-					if oi in extCache:
-						E_o, d0, d3 = extCache[oi]
-						return (E_o[0], d0) if atStart else (E_o[3], d3)
-					if atStart:
-						return other['A'], _unit(other['c1'][0] - other['A'][0], other['c1'][1] - other['A'][1])
-					return other['B'], _unit(other['B'][0] - other['c2'][0], other['B'][1] - other['c2'][1])
-
-				for si, seg in enumerate(segs):
-					if seg['c1'] is None:
-						continue
-					A, c1, c2, B = seg['A'], seg['c1'], seg['c2'], seg['B']
-					C = (A, c1, c2, B)
-					tA = _unit(c1[0] - A[0], c1[1] - A[1]) or _unit(B[0] - A[0], B[1] - A[1])
-					tB = _unit(B[0] - c2[0], B[1] - c2[1]) or _unit(B[0] - A[0], B[1] - A[1])
-					if tA is None or tB is None:
-						continue
-
-					def noCorner():
-						# no usable corner (inflection / degenerate): this segment
-						# makes no proposal; its neighbours decide the shared nodes
-						pass
-
-					t0, t1 = _extend(C, extBounds)
-					E = _sub(C, t0, t1)
-					dE0 = _unit(*_bezD(E, 0.0))
-					dE3 = _unit(*_bezD(E, 1.0))
-					if dE0 is None or dE3 is None:
-						noCorner()
-						continue
-					# A segment is treated as round only if at least one end
-					# sits on an axis extreme (real or reached by extension); a
-					# shallow curve with neither is left alone (v/w/x sides, terminals)
-					if _axisKind(dE0) is None and _axisKind(dE3) is None:
-						noCorner()
-						continue
-					hit = _rayInt(E[0], dE0, E[3], (-dE3[0], -dE3[1]))
-					if hit is None:
-						noCorner()
-						continue
-					corner, a, b = hit
-					if a <= 0 or b <= 0:
-						noCorner()  # tangents diverge: inflection / degenerate
-						continue
-					mid = ((E[0][0] + E[3][0]) / 2.0, (E[0][1] + E[3][1]) / 2.0)
-					# nearly-parallel end tangents: the corner runs off to infinity
-					# and is useless as a pivot (a b's long stem-curve, a straight
-					# side drawn as one shallow arc). Treat it as straight.
-					chordE = math.hypot(E[3][0] - E[0][0], E[3][1] - E[0][1])
-					if math.hypot(corner[0] - mid[0], corner[1] - mid[1]) > CORNER_FAR * chordE:
-						noCorner()
-						continue
-					dx, dy = corner[0] - mid[0], corner[1] - mid[1]
-					if abs(dx) < 1e-6 or abs(dy) < 1e-6:
-						noCorner()
-						continue
-					s = 1.0 if dx * dy > 0 else -1.0
-					capness = 1.0 - strokeLikeness(seg['castM'])
-					strength = th * curve * (1.0 - keepTerm * capness)
-					prev, nxt = segs[si - 1], segs[(si + 1) % nseg]
-
-					def endMove(N, tN, H, otherSeg, atStart):
-						"""Move for node N (tangent tN) and its handle H along the
-						tangent line: theta' x min(distance to the corner's foot on
-						this line, distance to the neighbour's far tangent line)."""
-						proj = (corner[0] - N[0]) * tN[0] + (corner[1] - N[1]) * tN[1]
-						Cleg = (N[0] + tN[0] * proj, N[1] + tN[1] * proj)
-						toward = 1.0 if proj >= 0 else -1.0
-						dN = abs(proj)
-						dH = abs((Cleg[0] - H[0]) * tN[0] + (Cleg[1] - H[1]) * tN[1])
-						fp, fd = farTangentLine(otherSeg, atStart)
-						capped = False
-						if fd is not None:
-							far = _rayInt(N, tN, fp, fd)
-							if far is not None:
-								F = far[0]
-								dF = abs((F[0] - N[0]) * tN[0] + (F[1] - N[1]) * tN[1])
-								dN = min(dN, dF)
-								dH = min(dH, abs((F[0] - H[0]) * tN[0] + (F[1] - H[1]) * tN[1]))
-								capped = True
-						if not capped and otherSeg['c1'] is not None:
-							# The neighbouring ARC runs parallel to this tangent (a
-							# u's straight left side) so it yields no cap and the
-							# node would slide to a far-away corner. Bound it by
-							# that arc's own half extent. Line neighbours are left
-							# to the clip step, which re-intersects with the stem.
-							oA, oB = otherSeg['A'], otherSeg['B']
-							chordOther = math.hypot(oB[0] - oA[0], oB[1] - oA[1])
-							if chordOther > 1e-6:
-								dN = min(dN, 0.5 * chordOther)
-								dH = min(dH, 0.5 * chordOther)
-						sign = -s * toward   # shrink (s=-1) -> toward the corner
-						chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
-						dN = min(dN, 2.0 * chordAB)
-						dH = min(dH, 2.0 * chordAB)
-						return ((sign * strength * dN * tN[0], sign * strength * dN * tN[1]),
-							(sign * strength * dH * tN[0], sign * strength * dH * tN[1]))
-
-					mvA, mv1 = endMove(A, tA, c1, prev, True)
-					mvB, mv2 = endMove(B, tB, c2, nxt, False)
-
-					# corrected extended arc, for clipping against adjoining lines
-					f = 1.0 + s * strength
-					E2 = tuple((corner[0] + f * (P[0] - corner[0]), corner[1] + f * (P[1] - corner[1])) for P in E)
-					span = (t1 - t0) if abs(t1 - t0) > 1e-9 else 1.0
-					u0 = (0.0 - t0) / span
-					u1 = (1.0 - t0) / span
-
-					def clipEnd(lineSeg, atStart):
-						"""Place the node at the intersection of the corrected
-						extended arc with the neighbouring straight line; the
-						handles come from re-splitting the arc there."""
-						u = self._clipToLine(E2, u0 if atStart else u1, lineSeg['A'], lineSeg['B'])
-						if u is None:
-							return None
-						S = _sub(E2, u, u1) if atStart else _sub(E2, u0, u)
-						return S
-
-					chordAB = math.hypot(B[0] - A[0], B[1] - A[1])
-					clipLimit = abs(strength) * 2.0 * chordAB + 2.0   # seg-clip-limit
-					if prev['c1'] is None:
-						S = clipEnd(prev, True)
-						if S is not None and math.hypot(S[0][0] - A[0], S[0][1] - A[1]) <= clipLimit:
-							mvA = (S[0][0] - A[0], S[0][1] - A[1])
-							mv1 = (S[1][0] - c1[0], S[1][1] - c1[1])
-					if nxt['c1'] is None:
-						S = clipEnd(nxt, False)
-						if S is not None and math.hypot(S[3][0] - B[0], S[3][1] - B[1]) <= clipLimit:
-							mvB = (S[3][0] - B[0], S[3][1] - B[1])
-							mv2 = (S[2][0] - c2[0], S[2][1] - c2[1])
-
-					proposals.setdefault(seg['iA'], []).append(mvA)
-					proposals.setdefault(seg['iB'], []).append(mvB)
-					handleMove[seg['i1']] = (mv1[0], mv1[1], seg['iA'], mvA)
-					handleMove[seg['i2']] = (mv2[0], mv2[1], seg['iB'], mvB)
-
-				# commit: nodes take the smallest proposal; handles follow their own
-				# segment's move, corrected by however far the node ended up from
-				# that segment's own wish (keeps the tangent direction intact)
-				chosen = {}
-				for idx, props in proposals.items():
-					chosen[idx] = min(props, key=lambda v: math.hypot(v[0], v[1]))
-				for hidx, (hx, hy, nidx, own) in handleMove.items():
-					d = chosen.get(nidx, (0.0, 0.0))
-					h = nodes[hidx].position
-					nodes[hidx].position = NSMakePoint(h.x + hx + (d[0] - own[0]), h.y + hy + (d[1] - own[1]))
-				for idx, d in chosen.items():
-					p = nodes[idx].position
-					nodes[idx].position = NSMakePoint(p.x + d[0], p.y + d[1])
+				weights = {seg['iA']: 1. - keepTerm * (1. - strokeLikeness(seg['castM'])) for seg in segs}
+				_correctRuns(path, th * curve, angleDeg, stem, origin, weights, self._clipToLine)
 
 		# ================= 2. slant everything =================
 		for path in paths:
@@ -789,6 +1065,15 @@ class MakeItalic(FilterWithDialog):
 		# cubics; only commit if the outline moves by <= EXTREME_TOL units.
 		for path, i in verticalNodes:
 			self._keepExtreme(path, i)
+
+		if closed and curve > 0:
+			new = [[(n.position.x, n.position.y) for n in p.nodes] for p in closed]
+			types = [[n.type for n in p.nodes] for p in closed]
+			smooth = [[n.smooth for n in p.nodes] for p in closed]
+			safe, _ = _safe_contours(slantedOriginal, new, types, smooth)
+			for path, pts in zip(closed, safe):
+				for node, point in zip(path.nodes, pts):
+					node.position = NSMakePoint(*point)
 
 	@objc.python_method
 	def _keepExtreme(self, path, i):
