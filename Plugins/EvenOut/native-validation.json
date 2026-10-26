@@ -1,0 +1,14 @@
+{
+  "fixture": "Disposable synthetic curves",
+  "checks": {
+    "nativeCapture": true,
+    "learnedBands": true,
+    "changed": true,
+    "nodeCountsSame": true,
+    "cancelExact": true,
+    "applyChanged": true,
+    "undoExact": true,
+    "redoExact": true,
+    "zeroUnchanged": true
+  }
+}

@@ -64,6 +64,14 @@ For instance filters, a basic custom parameter is:
 ProportionalWeight; amount:20; vertical:100; counters:80; width:100; harmony:0; balance:0
 ```
 
+### Even Out (Preview)
+
+[Even Out](Plugins/EvenOut/README.md) learns recurring stroke widths from the
+current master and uses them to ease bulges and pinches in curves. Open
+**Filter → Even Out (Preview)** and adjust **Amount**. No reference glyphs need
+to be chosen. This first version keeps straight stems fixed and skips uncertain
+geometry; inspect the preview before applying it.
+
 ### Rigormortise
 
 [Rigormortise](Plugins/Rigormortise/README.md) updates spacing and kerning as you
