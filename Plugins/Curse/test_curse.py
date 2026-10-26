@@ -134,6 +134,30 @@ def transform(paths, angle=12, curve=1, term=0, diag=1, stem=0, extremes=False):
     return output(layer)
 
 class GeometryTests(unittest.TestCase):
+    def test_subcurve_matches_original_parameterization(self):
+        cubic=((0.,0.),(30.,170.),(180.,-50.),(240.,100.))
+        for start,end in [(0.,1.),(.2,.8),(1.,2.),(1.,0.),(1.,1.),
+                          (1.-1e-14,1.5),(-2.,.5),(2.,-1.)]:
+            with self.subTest(interval=(start,end)):
+                part=ns['_sub'](cubic,start,end)
+                for t in (0.,.1,.37,.5,.81,1.):
+                    self.assertLess(math.dist(_bez(part,t),_bez(cubic,start+t*(end-start))),1e-8)
+    def test_extension_keeps_endpoint_tangent(self):
+        cubic=((0.,0.),(30.,170.),(180.,-50.),(240.,100.))
+        extended=ns['_sub'](cubic,1.,2.)
+        self.assertEqual(extended[0],cubic[-1])
+        self.assertGreater(math.dist(extended[0],extended[1]),1.)
+        self.assertLess(math.dist(_bezD(extended,0.),_bezD(cubic,1.)),1e-9)
+    def test_subcurve_reversal_and_composition(self):
+        cubic=((0.,0.),(30.,170.),(180.,-50.),(240.,100.))
+        backward=ns['_sub'](cubic,1.,0.)
+        for a,b in zip(backward,reversed(cubic)):
+            self.assertLess(math.dist(a,b),1e-9)
+        expanded=ns['_sub'](cubic,-1.,2.)
+        recovered=ns['_sub'](expanded,1/3.,2/3.)
+        for a,b in zip(recovered,cubic):
+            self.assertLess(math.dist(a,b),1e-8)
+
     def test_zero_angle_is_exact(self):
         p=ring(); self.assertEqual(p,transform(p,angle=0,extremes=True))
     def test_zero_corrections_is_exact_shear(self):

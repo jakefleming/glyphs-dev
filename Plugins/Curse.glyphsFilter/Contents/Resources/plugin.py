@@ -47,25 +47,12 @@ def _bezD(C, t):
 
 
 def _sub(C, t0, t1):
-	"""Control points of the cubic restricted/extended to [t0, t1] (any reals)."""
-	def lerp(a, b, t):
-		return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-
-	def split_left(P, t):
-		p01, p12, p23 = lerp(P[0], P[1], t), lerp(P[1], P[2], t), lerp(P[2], P[3], t)
-		p012, p123 = lerp(p01, p12, t), lerp(p12, p23, t)
-		return (P[0], p01, p012, lerp(p012, p123, t))
-
-	def split_right(P, t):
-		p01, p12, p23 = lerp(P[0], P[1], t), lerp(P[1], P[2], t), lerp(P[2], P[3], t)
-		p012, p123 = lerp(p01, p12, t), lerp(p12, p23, t)
-		return (lerp(p012, p123, t), p123, p23, P[3])
-	# de Casteljau works for parameters outside [0,1] as extrapolation
-	R = split_right(C, t0)
-	if abs(1 - t0) < 1e-12:
-		return R
-	u = (t1 - t0) / (1 - t0)
-	return split_left(R, u)
+	"""Reparameterize a cubic over any finite interval, including reversed spans."""
+	a, b = _bez(C, t0), _bez(C, t1)
+	da, db = _bezD(C, t0), _bezD(C, t1)
+	scale = (t1 - t0) / 3.0
+	return (a, (a[0] + scale * da[0], a[1] + scale * da[1]),
+	        (b[0] - scale * db[0], b[1] - scale * db[1]), b)
 
 
 def _rayInt(P, d1, Q, d2):
