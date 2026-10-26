@@ -820,6 +820,45 @@ def _upright_bowls(original, corrected, types, smooth, angle, y0, amount):
     return safe
 
 
+def _slanted_bounds(paths, slope=0., y0=0.):
+    """Exact horizontal bounds in coordinates parallel to the italic slant.
+
+    Evaluate cubic extrema, not control-point bounds or sampled outlines.
+    Open paths are excluded by the caller's spacing eligibility check.
+    """
+    xs=[]
+    for path in paths:
+        nodes=list(path.nodes);n=len(nodes)
+        on=[i for i,node in enumerate(nodes) if node.type!=OFFCURVE]
+        def point(i):
+            p=nodes[i].position
+            return (p.x-(p.y-y0)*slope,p.y)
+        for a,b in zip(on,on[1:]+on[:1]):
+            A,B=point(a),point(b);xs.extend((A[0],B[0]))
+            if (b-a)%n==3:
+                C=(A,point((a+1)%n),point((a+2)%n),B)
+                xs.extend(_bez(C,t)[0] for t in _extremeParams(C) if 0<t<1)
+    return (min(xs),max(xs)) if xs else None
+
+
+def _compensate_spacing(layer, paths, before, width, slope, y0, amount):
+    after=_slanted_bounds(paths,slope,y0)
+    if before is None or after is None:return
+    dx=amount*(before[0]-after[0])
+    dw=amount*((after[1]-after[0])-(before[1]-before[0]))
+    if abs(dx)<1e-9:dx=0.
+    if abs(dw)<1e-9:dw=0.
+    if not math.isfinite(width+dw) or width+dw<=0:return
+    # One rigid translation keeps outlines, handles and anchors together.
+    if dx:
+        for path in paths:
+            for node in path.nodes:
+                p=node.position;node.position=NSMakePoint(p.x+dx,p.y)
+        for anchor in layer.anchors:
+            p=anchor.position;anchor.position=NSMakePoint(p.x+dx,p.y)
+    if dw:layer.width=width+dw
+
+
 class MakeItalic(FilterWithDialog):
 
 	# ------------------------------------------------------------ UI
@@ -832,7 +871,7 @@ class MakeItalic(FilterWithDialog):
 		self._fields = {}
 		self._values = {'curve': 100., 'terminals': 0., 'diagonal': 100., 'stem': 0.}
 		W = 340
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 400))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 462))
 
 		def label(text, x, y, w, parent=view, size=12):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, 20))
@@ -855,14 +894,14 @@ class MakeItalic(FilterWithDialog):
 			parent.addSubview_(f)
 			return f
 
-		self._mainView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 400))
+		self._mainView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 462))
 		view.addSubview_(self._mainView)
-		label("Angle", 16, 361, 160, self._mainView)
-		self.angleField = field("12°", 262, 360, self._mainView)
+		label("Angle", 16, 423, 160, self._mainView)
+		self.angleField = field("12°", 262, 422, self._mainView)
 		self.angleField.setToolTip_("Degrees to add. Negative values lean left.")
-		label("Balance", 16, 329, 160, self._mainView)
-		self.balanceField = field("100%", 262, 304, self._mainView)
-		self.balanceSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 304, 232, 22))
+		label("Balance", 16, 391, 160, self._mainView)
+		self.balanceField = field("100%", 262, 366, self._mainView)
+		self.balanceSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 366, 232, 22))
 		self.balanceSlider.setMinValue_(0)
 		self.balanceSlider.setMaxValue_(100)
 		self.balanceSlider.setDoubleValue_(100)
@@ -871,9 +910,9 @@ class MakeItalic(FilterWithDialog):
 		self.balanceSlider.setAction_("balanceChanged:")
 		self.balanceSlider.setToolTip_("Blend from a plain slant to the corrected outline.")
 		self._mainView.addSubview_(self.balanceSlider)
-		label("Upright bowls", 16, 267, 200, self._mainView)
-		self.uprightField = field("0%", 262, 242, self._mainView)
-		self.uprightSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 242, 232, 22))
+		label("Upright bowls", 16, 329, 200, self._mainView)
+		self.uprightField = field("0%", 262, 304, self._mainView)
+		self.uprightSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 304, 232, 22))
 		self.uprightSlider.setMinValue_(0)
 		self.uprightSlider.setMaxValue_(100)
 		self.uprightSlider.setDoubleValue_(0)
@@ -882,6 +921,17 @@ class MakeItalic(FilterWithDialog):
 		self.uprightSlider.setAction_("balanceChanged:")
 		self.uprightSlider.setToolTip_("Keep detected bowls and their surrounding strokes upright. Ambiguous shapes are skipped. Balance scales the effect.")
 		self._mainView.addSubview_(self.uprightSlider)
+		label("Spacing", 16, 267, 200, self._mainView)
+		self.spacingField = field("0%", 262, 242, self._mainView)
+		self.spacingSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 242, 232, 22))
+		self.spacingSlider.setMinValue_(0)
+		self.spacingSlider.setMaxValue_(100)
+		self.spacingSlider.setDoubleValue_(0)
+		self.spacingSlider.setContinuous_(False)
+		self.spacingSlider.setTarget_(self)
+		self.spacingSlider.setAction_("balanceChanged:")
+		self.spacingSlider.setToolTip_("Restore original sidebearings measured along the slant by shifting the outline and adjusting its advance. Zero keeps the current width. Kerning is unchanged.")
+		self._mainView.addSubview_(self.spacingSlider)
 		self.status = label("Preview the selected outlines, then Apply.", 16, 10, 310, self._mainView, 11)
 
 		self._detailView = NSView.alloc().initWithFrame_(NSMakeRect(0, 45, W, 142))
@@ -922,6 +972,7 @@ class MakeItalic(FilterWithDialog):
 	def balanceChanged_(self, sender):
 		self.balanceField.setStringValue_("%g%%" % round(self.balanceSlider.doubleValue()))
 		self.uprightField.setStringValue_("%g%%" % round(self.uprightSlider.doubleValue()))
+		self.spacingField.setStringValue_("%g%%" % round(self.spacingSlider.doubleValue()))
 		self.update()
 
 	def control_textView_doCommandBySelector_(self, control, textView, command):
@@ -930,7 +981,7 @@ class MakeItalic(FilterWithDialog):
 		command = str(command)
 		if command not in commands:
 			return False
-		fields = [self.angleField, self.balanceField, self.uprightField] + list(self._fields.values())
+		fields = [self.angleField, self.balanceField, self.uprightField, self.spacingField] + list(self._fields.values())
 		if control not in fields:
 			return False
 		try:
@@ -957,6 +1008,8 @@ class MakeItalic(FilterWithDialog):
 				raise ValueError("Enter a finite number")
 			if sender == self.angleField:
 				self._angle = max(-35., min(35., v))
+			elif sender == self.spacingField:
+				self.spacingSlider.setDoubleValue_(max(0., min(100., v)))
 			elif sender == self.uprightField:
 				self.uprightSlider.setDoubleValue_(max(0., min(100., v)))
 			elif sender == self.balanceField:
@@ -1005,8 +1058,8 @@ class MakeItalic(FilterWithDialog):
 	# ------------------------------------------------------------ core
 
 	@objc.python_method
-	def italicize(self, layer, angleDeg, curve, keepTerm, diag, stem, restoreVerticals, upright=0.):
-		values = (angleDeg, curve, keepTerm, diag, stem)
+	def italicize(self, layer, angleDeg, curve, keepTerm, diag, stem, restoreVerticals, upright=0., spacing=0.):
+		values = (angleDeg, curve, keepTerm, diag, stem, upright, spacing)
 		if not all(math.isfinite(v) for v in values) or abs(angleDeg) > 45:
 			raise ValueError("Use a finite angle between −45° and 45°")
 		if any(not isinstance(shape, GSPath) for shape in layer.shapes):
@@ -1029,6 +1082,11 @@ class MakeItalic(FilterWithDialog):
 			y0 = b.origin.y + b.size.height / 2.0
 
 		paths = [s for s in layer.shapes if isinstance(s, GSPath)]
+		spacingWidth = float(layer.width) if spacing > 0 else 0.
+		spacingBefore = None
+		# Marks, spaces and layers with open paths keep their advances.
+		if spacing > 0 and math.isfinite(spacingWidth) and spacingWidth > 0 and paths and all(p.closed for p in paths):
+			spacingBefore = _slanted_bounds(paths)
 		uprightOriginal = [[(n.position.x, n.position.y) for n in p.nodes] for p in paths if p.closed]
 		slantedOriginal = [[(n.position.x + (n.position.y-y0)*k, n.position.y) for n in p.nodes] for p in paths if p.closed]
 		closed = [p for p in paths if p.closed]
@@ -1234,6 +1292,9 @@ class MakeItalic(FilterWithDialog):
 				for node, point in zip(path.nodes, pts):
 					node.position = NSMakePoint(*point)
 
+		if spacingBefore is not None:
+			_compensate_spacing(layer, paths, spacingBefore, spacingWidth, k, y0, min(1., spacing))
+
 	@objc.python_method
 	def _keepExtreme(self, path, i):
 		nodes = list(path.nodes)
@@ -1385,7 +1446,11 @@ class MakeItalic(FilterWithDialog):
 			upright = max(0., min(100., P('upright', upright))) / 100.
 			if inEditView and not params and hasattr(self, 'balanceSlider') and self.balanceSlider.doubleValue() == 0:
 				upright = 0.
-			self.italicize(layer, angle, amount('curve'), amount('terminals'), amount('diagonal'), amount('stem'), verts, upright)
+			spacing = self.spacingSlider.doubleValue() if inEditView and hasattr(self, 'spacingSlider') else 0.
+			spacing = max(0., min(100., P('spacing', spacing))) / 100.
+			if inEditView and not params and hasattr(self, 'balanceSlider') and self.balanceSlider.doubleValue() == 0:
+				spacing = 0.
+			self.italicize(layer, angle, amount('curve'), amount('terminals'), amount('diagonal'), amount('stem'), verts, upright, spacing)
 			if inEditView and hasattr(self, 'status'):
 				self.status.setStringValue_("Preview ready. Apply keeps this result.")
 		except Exception as exc:
@@ -1398,11 +1463,12 @@ class MakeItalic(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; angle:%g; curve:%g; terminals:%g; diagonal:%g; stem:%g; extremes:%d; upright:%g" % (
+		return "%s; angle:%g; curve:%g; terminals:%g; diagonal:%g; stem:%g; extremes:%d; upright:%g; spacing:%g" % (
 			self.__class__.__name__, self._angle, self.val('curve'), self.val('terminals'),
 			self.val('diagonal'), self.val('stem'),
 			1 if self.vertCheck.state() and self.balanceSlider.doubleValue() > 0 else 0,
-			self.uprightSlider.doubleValue() * self.balanceSlider.doubleValue() / 100.)
+			self.uprightSlider.doubleValue() * self.balanceSlider.doubleValue() / 100.,
+			self.spacingSlider.doubleValue() if self.balanceSlider.doubleValue() > 0 else 0.)
 
 	@objc.python_method
 	def __file__(self):

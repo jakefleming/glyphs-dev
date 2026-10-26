@@ -1,0 +1,27 @@
+{
+  "glyphsVersion": "3.5 (3532)",
+  "fixture": "Disposable synthetic cubic ring, 500-unit x-height, 600-unit advance",
+  "testedSourceSHA256": "f59be3baa64d34744ac2a060826f2131a2748a36ce9007f0f12f56a4188423bb",
+  "settings": {
+    "angle": 24,
+    "stem": 100,
+    "upright": 0,
+    "spacing": 100
+  },
+  "checks": {
+    "previewChanged": true,
+    "cancelExact": true,
+    "arrowIncrement1": true,
+    "shiftArrowIncrement10": true,
+    "arrowDecrement1": true,
+    "shiftArrowDecrement10": true,
+    "applyChanged": true,
+    "undoExact": true,
+    "redoExact": true,
+    "originalSelectedLayersUntouched": true
+  },
+  "widthBefore": 600,
+  "widthApplied": 648,
+  "method": "Isolated class loaded from source. Preview, arrows and Cancel in native dialog; Apply and Edit menu Undo/Redo in separate UI actions, compared node coordinates/types/smooth flags and advance. No font save in the final test.",
+  "limitation": "The initial combined script triggered an undo warning and Glyphs hung during a later test-font save. After recovery, separate native Apply/Undo/Redo actions passed; no font-save behavior is validated here."
+}

@@ -19,13 +19,13 @@ class ControlsTests(unittest.TestCase):
     def setUp(self):
         self.p=object.__new__(ns['MakeItalic']);p=self.p
         p._angle=12;p.angleField=Field('12°');p.balanceField=Field('100%');p.uprightField=Field('0%')
-        p.balanceSlider=Slider(100);p.uprightSlider=Slider(0)
+        p.balanceSlider=Slider(100);p.uprightSlider=Slider(0);p.spacingSlider=Slider(0);p.spacingField=Field('0%')
         p._values={'curve':100.,'diagonal':100.,'stem':0.,'terminals':0.}
         p._fields={k:Field(str(v)) for k,v in p._values.items()};p.updates=0
         p.update=lambda:setattr(p,'updates',p.updates+1)
         ns['NSEvent'].modifierFlags=staticmethod(lambda:0)
     def test_all_fields_step_and_shift_step(self):
-        for field in [self.p.angleField,self.p.balanceField,self.p.uprightField]+list(self.p._fields.values()):
+        for field in [self.p.angleField,self.p.balanceField,self.p.uprightField,self.p.spacingField]+list(self.p._fields.values()):
             editor=Editor('20')
             self.assertTrue(self.p.control_textView_doCommandBySelector_(field,editor,'moveUp:'))
             self.assertEqual(float(editor.s.rstrip('°%')),21)
@@ -36,7 +36,7 @@ class ControlsTests(unittest.TestCase):
         editor=Editor('2.5°');self.p.control_textView_doCommandBySelector_(self.p.angleField,editor,'moveUp:')
         self.assertEqual(self.p._angle,12.5)
     def test_clamping_and_unhandled_commands(self):
-        for field,text,command,expected in [(self.p.angleField,'34','moveUpAndModifySelection:',35),(self.p.uprightField,'0','moveDown:',0),(self.p._fields['curve'],'149','moveUpAndModifySelection:',150),(self.p._fields['terminals'],'99','moveUpAndModifySelection:',100)]:
+        for field,text,command,expected in [(self.p.angleField,'34','moveUpAndModifySelection:',35),(self.p.uprightField,'0','moveDown:',0),(self.p.spacingField,'99','moveUpAndModifySelection:',100),(self.p.spacingField,'0','moveDown:',0),(self.p._fields['curve'],'149','moveUpAndModifySelection:',150),(self.p._fields['terminals'],'99','moveUpAndModifySelection:',100)]:
             editor=Editor(text);self.p.control_textView_doCommandBySelector_(field,editor,command)
             self.assertEqual(float(editor.s.rstrip('°%')),expected)
         for command,text in [('moveLeft:','12'),('moveUp:','nan'),('moveDown:','oops')]:

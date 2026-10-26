@@ -65,7 +65,17 @@ At tight joins, Curse backs off the correction if it would fold a contour.
 The slant angle stays the same. Flat horizontal edges keep their height,
 including caps and baselines drawn as cubic curves.
 
-Curse keeps node counts, node types and advance widths. It works on cubic
+**Spacing** compensates for outline changes by shifting the glyph and changing
+its advance width. At 100%, it restores the upright source’s sidebearings
+measured along the slant; 0% keeps the existing positioning and advance.
+Intermediate values blend the shift and width change. Anchors move with the
+outline. Kerning is unchanged; check spacing in words after applying.
+Spaces, zero-width marks and layers with open paths keep their advances.
+Export parameters accept `spacing:0` through `spacing:100`. Zero Balance
+still produces a plain slant with the original advance.
+
+Curse keeps node counts and node types. Advances stay unchanged with Spacing
+at zero (the default). It works on cubic
 outlines; decompose components in a copy first. Open paths receive a plain
 slant. It won't draw a new italic `a` or `g`. Check tight joins and tails after
 applying it. Cancel restores the original; Apply is undoable.
@@ -152,4 +162,5 @@ python3 Scripts/_makeitalic_harness.py
 
 The tests use synthetic outlines and check geometry, signed angles, invalid
 input and export parameters. Native preview, Cancel, Apply, Undo and Redo
-checks are recorded in `Plugins/Curse/native-validation.json`.
+checks are recorded in `Plugins/Curse/native-validation.json`; spacing checks
+are in `Plugins/Curse/spacing-native-validation.json`.
