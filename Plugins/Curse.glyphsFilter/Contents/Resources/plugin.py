@@ -13,7 +13,7 @@ import objc
 import math
 from GlyphsApp import Glyphs, GSPath, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
-from AppKit import NSView, NSSlider, NSTextField, NSButton, NSMakeRect, NSFont
+from AppKit import NSView, NSSlider, NSTextField, NSButton, NSMakeRect, NSFont, NSEvent
 from Foundation import NSMakePoint
 
 FLAT = 12         # polyline pieces per curve for ray casts
@@ -682,6 +682,21 @@ def _correctRuns(path, strength, angle, stem, origin, terminal_weights, clip_to_
     for ids,parts in collected.items():
         for i,p in zip(ids,parts[0][1]):nodes[i].position=NSMakePoint(*p)
 
+    # An exactly horizontal edge is a cap/baseline constraint, including
+    # edges encoded as cubics. Curve intersections must not lift its corner.
+    locked={}
+    for f in frags:
+        if max(p[1] for p in f['C'])-min(p[1] for p in f['C'])<1e-9:
+            ids=f['orig'] if f['orig'] is not None else (f['a'],f['b'])
+            for index in ids:locked[index]=xy[index][1]
+    for index,y in locked.items():
+        node=nodes[index];dy=y-node.position.y
+        node.position=NSMakePoint(node.position.x,y)
+        if node.type!='offcurve' and node.smooth:
+            for j in ((index-1)%n,(index+1)%n):
+                if j not in locked and nodes[j].type=='offcurve':
+                    h=nodes[j];h.position=NSMakePoint(h.position.x,h.position.y+dy)
+
     # Avoid floating-point drift at unchanged coordinates.
     for nd,old in zip(nodes,xy):
         x,y=nd.position.x,nd.position.y
@@ -908,6 +923,29 @@ class MakeItalic(FilterWithDialog):
 		self.balanceField.setStringValue_("%g%%" % round(self.balanceSlider.doubleValue()))
 		self.uprightField.setStringValue_("%g%%" % round(self.uprightSlider.doubleValue()))
 		self.update()
+
+	def control_textView_doCommandBySelector_(self, control, textView, command):
+		commands = {'moveUp:': 1, 'moveDown:': -1,
+			'moveUpAndModifySelection:': 1, 'moveDownAndModifySelection:': -1}
+		command = str(command)
+		if command not in commands:
+			return False
+		fields = [self.angleField, self.balanceField, self.uprightField] + list(self._fields.values())
+		if control not in fields:
+			return False
+		try:
+			value = float(textView.string().replace('°', '').replace('%', '').strip())
+			if not math.isfinite(value):
+				return False
+		except (ValueError, TypeError):
+			return False
+		shift = 'AndModifySelection' in command or bool(NSEvent.modifierFlags() & (1 << 17))
+		control.setStringValue_(str(value + commands[command] * (10 if shift else 1)))
+		self.fieldChanged_(control)
+		# Keep the active field editor in sync with clamped/formatted values.
+		textView.setString_(control.stringValue())
+		textView.setSelectedRange_((0, len(control.stringValue())))
+		return True
 
 	def controlTextDidEndEditing_(self, notification):
 		self.fieldChanged_(notification.object())

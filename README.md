@@ -39,6 +39,7 @@ ones. Check tight joins and small counters when making large changes.
 Select glyphs and choose **Filter → Curse**. Set **Angle**, then use **Balance**
 to blend between a plain slant and the corrected shape. Negative angles lean
 left. The preview starts from the original each time you change a value.
+Use ↑/↓ in any numeric field for steps of 1, or Shift–↑/↓ for steps of 10.
 
 The main dialog also shows **Rounds**, **Diagonals**, **Stem weight**
 and **Endings**. They adjust curve tension, straight diagonal weight, vertical
@@ -61,7 +62,8 @@ less than the requested amount. Node structure and advance widths are kept;
 check corresponding masters because detection can differ between them.
 
 At tight joins, Curse backs off the correction if it would fold a contour.
-The slant angle stays the same.
+The slant angle stays the same. Flat horizontal edges keep their height,
+including caps and baselines drawn as cubic curves.
 
 Curse keeps node counts, node types and advance widths. It works on cubic
 outlines; decompose components in a copy first. Open paths receive a plain

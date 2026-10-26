@@ -7,7 +7,7 @@ if os.environ.get('CURSE_TEST_PLUGIN'):
 # ---------------------------------------------------------------- stubs
 objc = types.ModuleType("objc"); objc.python_method = lambda f: f; sys.modules["objc"] = objc
 appkit = types.ModuleType("AppKit")
-for name in ("NSView", "NSSlider", "NSTextField", "NSButton", "NSFont", "NSPopover", "NSViewController"):
+for name in ("NSView", "NSSlider", "NSTextField", "NSButton", "NSFont", "NSPopover", "NSViewController", "NSEvent"):
     setattr(appkit, name, type(name, (object,), {}))
 appkit.NSMakeRect = lambda x, y, w, h: (x, y, w, h)
 sys.modules["AppKit"] = appkit

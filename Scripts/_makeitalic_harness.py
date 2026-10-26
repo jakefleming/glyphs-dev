@@ -1,6 +1,9 @@
 """Run Curse's synthetic regression tests outside Glyphs."""
 from pathlib import Path
-import runpy
+import unittest
 
 if __name__ == "__main__":
-    runpy.run_path(str(Path(__file__).resolve().parents[1] / "Plugins/Curse/test_curse.py"), run_name="__main__")
+    suite = unittest.defaultTestLoader.discover(
+        str(Path(__file__).resolve().parents[1] / "Plugins/Curse"), pattern="test_*.py")
+    result = unittest.TextTestRunner(verbosity=1).run(suite)
+    raise SystemExit(not result.wasSuccessful())
