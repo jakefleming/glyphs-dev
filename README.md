@@ -40,12 +40,25 @@ Select glyphs and choose **Filter → Curse**. Set **Angle**, then use **Balance
 to blend between a plain slant and the corrected shape. Negative angles lean
 left. The preview starts from the original each time you change a value.
 
-**Fine tune…** opens four controls: **Rounds**, **Diagonals**, **Stem weight**
+The main dialog also shows **Rounds**, **Diagonals**, **Stem weight**
 and **Endings**. They adjust curve tension, straight diagonal weight, vertical
 stem weight and the amount of curve adjustment at detected stroke endings.
 **Refit extrema** tries to return nodes to vertical extrema within a small
 shape tolerance. Balance also scales the round, diagonal and stem adjustments.
 At zero, it produces a plain slant, rounded to the font's grid.
+
+**Upright bowls** reduces the remaining lean of geometrically detected counters
+and open bowls after the curve correction. It moves their surrounding strokes
+with them and blends back into the rest of the letter. Zero keeps the existing
+result; 100% applies the full detected correction. Balance scales this control
+too, so zero Balance is still a plain slant. Export parameters accept
+`upright:0` through `upright:100`.
+
+Detection is conservative and works from the outlines, without glyph names.
+Narrow slits, branching cavities and overlapping outlines may be skipped.
+Closely spaced bowls share a blended transition, so their correction can be
+less than the requested amount. Node structure and advance widths are kept;
+check corresponding masters because detection can differ between them.
 
 At tight joins, Curse backs off the correction if it would fold a contour.
 The slant angle stays the same.

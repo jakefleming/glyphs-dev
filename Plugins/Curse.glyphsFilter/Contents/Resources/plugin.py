@@ -13,7 +13,7 @@ import objc
 import math
 from GlyphsApp import Glyphs, GSPath, LINE, CURVE, OFFCURVE
 from GlyphsApp.plugins import FilterWithDialog
-from AppKit import NSView, NSSlider, NSTextField, NSButton, NSMakeRect, NSFont, NSPopover, NSViewController
+from AppKit import NSView, NSSlider, NSTextField, NSButton, NSMakeRect, NSFont
 from Foundation import NSMakePoint
 
 FLAT = 12         # polyline pieces per curve for ray casts
@@ -689,6 +689,122 @@ def _correctRuns(path, strength, angle, stem, origin, terminal_weights, clip_to_
         if abs(y-old[1])<1e-10:y=old[1]
         nd.position=NSMakePoint(x,y)
 
+def _bowl_regions(points, types):
+    """Find white cavities bounded by ink on three or four sides.
+
+    Scan both axes so openings may face up, down, left or right. Ambiguous
+    branching cavities and narrow slits are excluded. Regions include the
+    adjacent ink, letting a single deformation move both sides of a stroke.
+    """
+    polygons = [_outline_points(p, t, .5) for p, t in zip(points, types)]
+    if not polygons or _outline_crossings(polygons):
+        return []
+    regions = []
+    for axis in (0, 1):
+        polys = [[(p[axis], p[1-axis]) for p in poly] for poly in polygons]
+        lo = min(p[1] for poly in polys for p in poly)
+        hi = max(p[1] for poly in polys for p in poly)
+        step = (hi-lo)/96.
+        if step < 1e-6:
+            continue
+        def cuts(y):
+            xs = []
+            for poly in polys:
+                for a,b in zip(poly, poly[1:]+poly[:1]):
+                    if (a[1]>y)!=(b[1]>y):
+                        xs.append(a[0]+(y-a[1])*(b[0]-a[0])/(b[1]-a[1]))
+            return sorted(xs)
+        def ink(x,y):
+            return sum(v<x for v in cuts(y))%2 == 1
+        tracks=[]; active=[]
+        for row in range(96):
+            y=lo+(row+.5)*step; xs=cuts(y); current=[]
+            for j in range(1,len(xs)-2,2):
+                a,b=xs[j],xs[j+1]
+                if b-a < step*2: continue
+                matches=[t for t in active if min(b,t[-1][2])-max(a,t[-1][1]) > .5*min(b-a,t[-1][2]-t[-1][1])]
+                # A split/merge is ambiguous: don't join it into a single bowl.
+                if len(matches)==1 and matches[0] not in current:
+                    t=matches[0]
+                else:
+                    t=[];tracks.append(t)
+                t.append((y,a,b,xs[j-1],xs[j+2]));current.append(t)
+            active=current
+        for t in tracks:
+            if len(t)<10: continue
+            y1,y2=t[0][0]-step/2,t[-1][0]+step/2
+            a=min(r[1] for r in t);b=max(r[2] for r in t)
+            if min(b-a,y2-y1) < .12*max(b-a,y2-y1): continue
+            cx=(a+b)/2
+            # A white channel between separate stems is not a bowl.
+            if not (ink(cx,y1-step) or ink(cx,y2+step)): continue
+            left=min(r[3] for r in t);right=max(r[4] for r in t)
+            wall=min(a-left,right-b)
+            if wall<=step: continue
+            box=(a,y1-step,b,y2+step)
+            if axis: box=(box[1],box[0],box[3],box[2])
+            # Prefer one coherent region over competing overlapping cavities.
+            if any(min(box[2],q[2])-max(box[0],q[0]) > .25*min(box[2]-box[0],q[2]-q[0]) and min(box[3],q[3])-max(box[1],q[1]) > .25*min(box[3]-box[1],q[3]-q[1]) for q in regions): continue
+            regions.append(box)
+    return regions
+
+
+def _upright_bowls(original, corrected, types, smooth, angle, y0, amount):
+    if amount<=0: return corrected
+    regions=_bowl_regions(original,types)
+    if not regions:return corrected
+    k=math.tan(math.radians(angle))
+    fitted=[]
+    for l,b,r,t in regions:
+        samples=[(a[1],z[0]-a[0]) for src,dst,ts in zip(original,corrected,types) for a,z,kind in zip(src,dst,ts) if kind!='offcurve' and l-1<=a[0]<=r+1 and b-1<=a[1]<=t+1]
+        if len(samples)<4:continue
+        mean_y=sum(y for y,d in samples)/len(samples)
+        mean_d=sum(d for y,d in samples)/len(samples)
+        variance=sum((y-mean_y)**2 for y,d in samples)
+        if variance<1e-8:continue
+        slope=sum((y-mean_y)*(d-mean_d) for y,d in samples)/variance
+        # Existing curve correction may already restore a round bowl's axis.
+        # Remove the measured residual lean, never apply a second unshear.
+        if abs(slope)>abs(k)*1.5:continue
+        fitted.append((l,b,r,t,slope))
+    def ramp(v,lo,hi,fade):
+        d=max(lo-v,0.,v-hi)/fade
+        return 1. if d<=0 else (0. if d>=1 else 1.-d*d*(3.-2.*d))
+    def shift(x,y):
+        # Evaluate in unslanted coordinates; the correction already computed
+        # by Curse remains part of the outline at every slider value.
+        x=x-(y-y0)*k
+        total=weight=0.
+        contributions=[]
+        for l,b,r,t,slope in fitted:
+            fade=max(r-l,t-b)*.5
+            w=ramp(x,l,r,fade)*ramp(y,b,t,fade)
+            contributions.append((w,slope*(y-(b+t)/2.)))
+        full=[d for w,d in contributions if w>=1.-1e-10]
+        if full:return -amount*sum(full)/len(full)
+        for w,d in contributions:
+            influence=w/max(1e-10,1.-w)
+            total+=influence*d;weight+=influence
+        return -amount*total/max(1.,weight)
+    candidate=[]
+    for pts,ts in zip(corrected,types):
+        result=[];n=len(pts)
+        for i,(x,y) in enumerate(pts):
+            if ts[i]!='offcurve':
+                result.append((x+shift(x,y),y));continue
+            # Transport handles with the same local derivative at their
+            # on-curve node, preserving incoming/outgoing tangent alignment.
+            j=(i-1)%n if ts[(i-1)%n]!='offcurve' else (i+1)%n
+            if ts[j]=='offcurve':return corrected
+            ax,ay=pts[j];eps=.01
+            dx=(shift(ax+eps,ay)-shift(ax-eps,ay))/(2*eps)
+            dy=(shift(ax,ay+eps)-shift(ax,ay-eps))/(2*eps)
+            result.append((x+shift(ax,ay)+dx*(x-ax)+dy*(y-ay),y))
+        candidate.append(result)
+    safe,_=_safe_contours(corrected,candidate,types,smooth)
+    return safe
+
+
 class MakeItalic(FilterWithDialog):
 
 	# ------------------------------------------------------------ UI
@@ -701,7 +817,7 @@ class MakeItalic(FilterWithDialog):
 		self._fields = {}
 		self._values = {'curve': 100., 'terminals': 0., 'diagonal': 100., 'stem': 0.}
 		W = 340
-		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 178))
+		view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 400))
 
 		def label(text, x, y, w, parent=view, size=12):
 			f = NSTextField.alloc().initWithFrame_(NSMakeRect(x, y, w, 20))
@@ -724,14 +840,14 @@ class MakeItalic(FilterWithDialog):
 			parent.addSubview_(f)
 			return f
 
-		self._mainView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 178))
+		self._mainView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 400))
 		view.addSubview_(self._mainView)
-		label("Angle", 16, 139, 160, self._mainView)
-		self.angleField = field("12°", 262, 138, self._mainView)
+		label("Angle", 16, 361, 160, self._mainView)
+		self.angleField = field("12°", 262, 360, self._mainView)
 		self.angleField.setToolTip_("Degrees to add. Negative values lean left.")
-		label("Balance", 16, 107, 160, self._mainView)
-		self.balanceField = field("100%", 262, 82, self._mainView)
-		self.balanceSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 82, 232, 22))
+		label("Balance", 16, 329, 160, self._mainView)
+		self.balanceField = field("100%", 262, 304, self._mainView)
+		self.balanceSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 304, 232, 22))
 		self.balanceSlider.setMinValue_(0)
 		self.balanceSlider.setMaxValue_(100)
 		self.balanceSlider.setDoubleValue_(100)
@@ -740,16 +856,20 @@ class MakeItalic(FilterWithDialog):
 		self.balanceSlider.setAction_("balanceChanged:")
 		self.balanceSlider.setToolTip_("Blend from a plain slant to the corrected outline.")
 		self._mainView.addSubview_(self.balanceSlider)
-		self.detailButton = NSButton.alloc().initWithFrame_(NSMakeRect(12, 45, 160, 24))
-		self.detailButton.setButtonType_(0)
-		self.detailButton.setBezelStyle_(0)
-		self.detailButton.setTitle_("Fine tune…")
-		self.detailButton.setTarget_(self)
-		self.detailButton.setAction_("toggleDetails:")
-		self._mainView.addSubview_(self.detailButton)
+		label("Upright bowls", 16, 267, 200, self._mainView)
+		self.uprightField = field("0%", 262, 242, self._mainView)
+		self.uprightSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(16, 242, 232, 22))
+		self.uprightSlider.setMinValue_(0)
+		self.uprightSlider.setMaxValue_(100)
+		self.uprightSlider.setDoubleValue_(0)
+		self.uprightSlider.setContinuous_(False)
+		self.uprightSlider.setTarget_(self)
+		self.uprightSlider.setAction_("balanceChanged:")
+		self.uprightSlider.setToolTip_("Keep detected bowls and their surrounding strokes upright. Ambiguous shapes are skipped. Balance scales the effect.")
+		self._mainView.addSubview_(self.uprightSlider)
 		self.status = label("Preview the selected outlines, then Apply.", 16, 10, 310, self._mainView, 11)
 
-		self._detailView = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, 142))
+		self._detailView = NSView.alloc().initWithFrame_(NSMakeRect(0, 45, W, 142))
 		for key, title, x, y in [('curve', 'Rounds', 16, 106), ('diagonal', 'Diagonals', 178, 106),
 				('stem', 'Stem weight', 16, 66), ('terminals', 'Endings', 178, 66)]:
 			label(title, x, y + 18, 140, self._detailView, 11)
@@ -766,11 +886,7 @@ class MakeItalic(FilterWithDialog):
 		self.vertCheck.setTarget_(self)
 		self.vertCheck.setAction_("balanceChanged:")
 		self._detailView.addSubview_(self.vertCheck)
-		self._detailController = NSViewController.alloc().init()
-		self._detailController.setView_(self._detailView)
-		self._popover = NSPopover.alloc().init()
-		self._popover.setContentViewController_(self._detailController)
-		self._popover.setBehavior_(1)
+		view.addSubview_(self._detailView)
 		self.dialog = view
 
 	@objc.python_method
@@ -788,14 +904,9 @@ class MakeItalic(FilterWithDialog):
 		v = self._values[key]
 		return v if key == 'terminals' else v * self.balanceSlider.doubleValue() / 100.
 
-	def toggleDetails_(self, sender):
-		if self._popover.isShown():
-			self._popover.close()
-		else:
-			self._popover.showRelativeToRect_ofView_preferredEdge_(sender.bounds(), sender, 1)
-
 	def balanceChanged_(self, sender):
 		self.balanceField.setStringValue_("%g%%" % round(self.balanceSlider.doubleValue()))
+		self.uprightField.setStringValue_("%g%%" % round(self.uprightSlider.doubleValue()))
 		self.update()
 
 	def controlTextDidEndEditing_(self, notification):
@@ -808,6 +919,8 @@ class MakeItalic(FilterWithDialog):
 				raise ValueError("Enter a finite number")
 			if sender == self.angleField:
 				self._angle = max(-35., min(35., v))
+			elif sender == self.uprightField:
+				self.uprightSlider.setDoubleValue_(max(0., min(100., v)))
 			elif sender == self.balanceField:
 				self.balanceSlider.setDoubleValue_(max(0., min(100., v)))
 			else:
@@ -854,7 +967,7 @@ class MakeItalic(FilterWithDialog):
 	# ------------------------------------------------------------ core
 
 	@objc.python_method
-	def italicize(self, layer, angleDeg, curve, keepTerm, diag, stem, restoreVerticals):
+	def italicize(self, layer, angleDeg, curve, keepTerm, diag, stem, restoreVerticals, upright=0.):
 		values = (angleDeg, curve, keepTerm, diag, stem)
 		if not all(math.isfinite(v) for v in values) or abs(angleDeg) > 45:
 			raise ValueError("Use a finite angle between −45° and 45°")
@@ -878,6 +991,7 @@ class MakeItalic(FilterWithDialog):
 			y0 = b.origin.y + b.size.height / 2.0
 
 		paths = [s for s in layer.shapes if isinstance(s, GSPath)]
+		uprightOriginal = [[(n.position.x, n.position.y) for n in p.nodes] for p in paths if p.closed]
 		slantedOriginal = [[(n.position.x + (n.position.y-y0)*k, n.position.y) for n in p.nodes] for p in paths if p.closed]
 		closed = [p for p in paths if p.closed]
 
@@ -1075,6 +1189,13 @@ class MakeItalic(FilterWithDialog):
 				for node, point in zip(path.nodes, pts):
 					node.position = NSMakePoint(*point)
 
+		if closed and upright > 0:
+			corrected = [[(n.position.x, n.position.y) for n in p.nodes] for p in closed]
+			result = _upright_bowls(uprightOriginal, corrected, [[n.type for n in p.nodes] for p in closed], [[n.smooth for n in p.nodes] for p in closed], angleDeg, y0, min(1., upright))
+			for path, pts in zip(closed, result):
+				for node, point in zip(path.nodes, pts):
+					node.position = NSMakePoint(*point)
+
 	@objc.python_method
 	def _keepExtreme(self, path, i):
 		nodes = list(path.nodes)
@@ -1222,7 +1343,11 @@ class MakeItalic(FilterWithDialog):
 			# A zero Balance is exactly a plain slant, including when refitting is checked.
 			if inEditView and not params and hasattr(self, 'balanceSlider') and self.balanceSlider.doubleValue() == 0:
 				verts = False
-			self.italicize(layer, angle, amount('curve'), amount('terminals'), amount('diagonal'), amount('stem'), verts)
+			upright = self.uprightSlider.doubleValue() * self.balanceSlider.doubleValue() / 100. if inEditView and hasattr(self, 'uprightSlider') else 0.
+			upright = max(0., min(100., P('upright', upright))) / 100.
+			if inEditView and not params and hasattr(self, 'balanceSlider') and self.balanceSlider.doubleValue() == 0:
+				upright = 0.
+			self.italicize(layer, angle, amount('curve'), amount('terminals'), amount('diagonal'), amount('stem'), verts, upright)
 			if inEditView and hasattr(self, 'status'):
 				self.status.setStringValue_("Preview ready. Apply keeps this result.")
 		except Exception as exc:
@@ -1235,10 +1360,11 @@ class MakeItalic(FilterWithDialog):
 
 	@objc.python_method
 	def generateCustomParameter(self):
-		return "%s; angle:%g; curve:%g; terminals:%g; diagonal:%g; stem:%g; extremes:%d" % (
+		return "%s; angle:%g; curve:%g; terminals:%g; diagonal:%g; stem:%g; extremes:%d; upright:%g" % (
 			self.__class__.__name__, self._angle, self.val('curve'), self.val('terminals'),
 			self.val('diagonal'), self.val('stem'),
-			1 if self.vertCheck.state() and self.balanceSlider.doubleValue() > 0 else 0)
+			1 if self.vertCheck.state() and self.balanceSlider.doubleValue() > 0 else 0,
+			self.uprightSlider.doubleValue() * self.balanceSlider.doubleValue() / 100.)
 
 	@objc.python_method
 	def __file__(self):

@@ -1,0 +1,15 @@
+{
+  "cancelExact": true,
+  "applyChanged": true,
+  "widthUnchanged": true,
+  "undoExact": true,
+  "glyphsVersion": "3.5 (3532)",
+  "fixture": "Disposable synthetic box counter",
+  "previewPercentages": [
+    0,
+    50,
+    100
+  ],
+  "testedSourceSHA256": "0f85b70cd80e5ee460fb36530e33c4df430787ecb9ceb7ffc2865e450b6861fd",
+  "method": "Isolated class loaded from source into Glyphs; native filter dialog, UI Cancel/Apply, glyph undo manager"
+}
