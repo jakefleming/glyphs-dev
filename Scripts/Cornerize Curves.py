@@ -1,16 +1,18 @@
-# MenuTitle: Cornerize Curves
+# MenuTitle: Cornerize Curves…
 # -*- coding: utf-8 -*-
 __doc__ = """
-Replaces each curve segment with a corner point at the handles' tangent intersection.
-Falls back to flat line segments when the intersection is too far away or behind the handles.
+Turn cubic curves into corners or straight segments. Prompts for a threshold
+in font units and remembers it for the next run. Applies to selected layers.
 """
 
 import math
-from Foundation import NSPoint
+from Foundation import NSPoint, NSMakeRect
+from AppKit import NSAlert, NSTextField, NSAlertFirstButtonReturn
 from GlyphsApp import Glyphs, GSPath, GSNode, LINE, CURVE, OFFCURVE
 
-MAX_FACTOR = 1.0  # corner may sit at most this * chord-length away from the segment; lower = stricter
-FALLBACK_STEPS = 3  # line segments used when falling back to plain flattening
+DEFAULT_THRESHOLD = 30.0
+THRESHOLD_KEY = "com.jakefleming.CornerizeCurves.threshold"
+FALLBACK_STEPS = 3
 
 
 def bez(p0, p1, p2, p3, t):
@@ -32,7 +34,6 @@ def tangent_intersection(p0, p1, p2, p3):
         return None
     t = ((p3.x - p0.x) * b.y - (p3.y - p0.y) * b.x) / denom
     u = ((p3.x - p0.x) * a.y - (p3.y - p0.y) * a.x) / denom
-    # intersection must lie ahead of both handles, not behind (S-curves)
     if t < 0 or u < 0:
         return None
     return NSPoint(p0.x + t * a.x, p0.y + t * a.y)
@@ -42,39 +43,108 @@ def dist(a, b):
     return math.hypot(a.x - b.x, a.y - b.y)
 
 
-for layer in Glyphs.font.selectedLayers:
-    layer.parent.beginUndo()
-    newShapes = []
-    for shape in layer.shapes:
-        if not isinstance(shape, GSPath):
-            newShapes.append(shape)
+def ask_threshold():
+    Glyphs.registerDefault(THRESHOLD_KEY, DEFAULT_THRESHOLD)
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_("Cornerize Curves")
+    explanation = (
+        "Threshold (font units): maximum distance from the corner to the "
+        "curve's midpoint. Higher values allow more pronounced corners. "
+        "Other curves become three straight segments."
+    )
+    alert.setInformativeText_(explanation)
+    alert.addButtonWithTitle_("Apply")
+    alert.addButtonWithTitle_("Cancel")
+    field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 24))
+    field.setStringValue_(str(Glyphs.defaults[THRESHOLD_KEY]))
+    alert.setAccessoryView_(field)
+    alert.window().setInitialFirstResponder_(field)
+    while alert.runModal() == NSAlertFirstButtonReturn:
+        try:
+            value = float(field.stringValue().strip())
+            if not math.isfinite(value) or value < 0:
+                raise ValueError
+        except (ValueError, OverflowError):
+            alert.setInformativeText_("Enter a finite number of zero or more.\n\n" + explanation)
             continue
-        nodes = list(shape.nodes)
-        newPath = GSPath()
-        newPath.closed = shape.closed
-        for i, n in enumerate(nodes):
-            if n.type == OFFCURVE:
-                continue
-            if n.type == CURVE:
-                p0 = nodes[i - 3].position
-                p1 = nodes[i - 2].position
-                p2 = nodes[i - 1].position
-                p3 = n.position
-                chord = dist(p0, p3)
-                corner = tangent_intersection(p0, p1, p2, p3)
-                ok = (corner is not None
-                      and chord > 0
-                      and min(dist(corner, p0), dist(corner, p3)) <= MAX_FACTOR * chord)
-                if ok:
-                    newPath.nodes.append(GSNode(corner, LINE))
-                else:
-                    for s in range(1, FALLBACK_STEPS):
-                        newPath.nodes.append(GSNode(bez(p0, p1, p2, p3, s / float(FALLBACK_STEPS)), LINE))
-                newPath.nodes.append(GSNode(p3, LINE))
-            else:
-                newPath.nodes.append(GSNode(n.position, LINE))
-        newShapes.append(newPath)
-    layer.shapes = newShapes
-    layer.parent.endUndo()
+        Glyphs.defaults[THRESHOLD_KEY] = value
+        return value
+    return None
 
-Glyphs.redraw()
+
+def cornerize_path(path, threshold):
+    nodes = list(path.nodes)
+    # Leave non-cubic paths alone, including quadratic outlines.
+    if not any(n.type == CURVE for n in nodes):
+        return None, 0, 0
+    if any(n.type not in (LINE, CURVE, OFFCURVE) for n in nodes):
+        raise ValueError("Cornerize Curves supports cubic paths only.")
+    for i, node in enumerate(nodes):
+        if node.type == CURVE:
+            if (len(nodes) < 4 or (not path.closed and i < 3)
+                    or nodes[i - 1].type != OFFCURVE
+                    or nodes[i - 2].type != OFFCURVE
+                    or nodes[i - 3].type == OFFCURVE):
+                raise ValueError("A curve does not have two handles and a start point.")
+    result = path.copy()
+    result.nodes = []
+    cornered = flattened = 0
+    for i, node in enumerate(nodes):
+        if node.type == OFFCURVE:
+            continue
+        if node.type == CURVE:
+            p0, p1, p2 = (nodes[i - j].position for j in (3, 2, 1))
+            p3 = node.position
+            corner = tangent_intersection(p0, p1, p2, p3)
+            if corner is not None and dist(corner, bez(p0, p1, p2, p3, 0.5)) <= threshold:
+                result.nodes.append(GSNode(corner, LINE))
+                cornered += 1
+            else:
+                for step in range(1, FALLBACK_STEPS):
+                    result.nodes.append(GSNode(bez(p0, p1, p2, p3, step / float(FALLBACK_STEPS)), LINE))
+                flattened += 1
+        endpoint = node.copy()
+        endpoint.type = LINE
+        endpoint.smooth = False
+        result.nodes.append(endpoint)
+    return result, cornered, flattened
+
+
+def main():
+    font = Glyphs.font
+    if font is None or not font.selectedLayers:
+        print("Cornerize Curves: select one or more glyph layers first.")
+        return
+    layers = list(font.selectedLayers)
+    threshold = ask_threshold()
+    if threshold is None:
+        return
+    # Build replacements before touching the font, so malformed paths cannot
+    # leave half of the selection converted.
+    replacements = []
+    cornered = flattened = 0
+    for layer in layers:
+        paths = []
+        for index, shape in enumerate(layer.shapes):
+            if not isinstance(shape, GSPath):
+                continue
+            result, corners, flats = cornerize_path(shape, threshold)
+            if result is not None:
+                paths.append((index, result))
+                cornered += corners
+                flattened += flats
+        if paths:
+            replacements.append((layer, paths))
+    for layer, paths in replacements:
+        layer.parent.beginUndo()
+        try:
+            for index, result in paths:
+                layer.shapes[index] = result
+        finally:
+            layer.parent.endUndo()
+    print("corners:", cornered, "| fallback-flattened:", flattened)
+    Glyphs.redraw()
+
+
+if __name__ == "__main__":
+    main()

@@ -84,16 +84,18 @@ only the font file. A notification reports the result.
 ## Scripts
 
 - **Flatten Curves** replaces each curve with `STEPS` straight segments.
-- **Cornerize Curves** replaces a curve with a corner at the intersection of its
-  endpoint tangents.
-- **Cornerize Curves (Threshold)** does this only when the corner falls within
-  `MAX_DEV` units of the curve. Larger curves are flattened instead.
+- **Cornerize Curves…** asks for a threshold in font units and remembers your
+  last value (30 by default). It replaces a cubic curve with a corner where its
+  endpoint tangents meet, provided that corner is within the threshold of the
+  curve's midpoint. Higher values allow more pronounced corners. Curves that
+  exceed the threshold, or have no suitable intersection, become three straight
+  segments. It works on the selected layers; Cancel leaves the outlines alone.
 - **Remove Shallow Points** removes points that deviate less than `TOL` units
   from the line between their neighbours.
 
-For angular outlines, try **Cornerize Curves (Threshold)** followed by
-**Remove Shallow Points**. Adjust the constants in each script for the amount
-of detail you want to keep.
+For angular outlines, try **Cornerize Curves…** followed by
+**Remove Shallow Points**. Set the corner threshold in the dialog; adjust
+`STEPS` and `TOL` in the other scripts for the amount of detail you want to keep.
 
 ## Development
 
